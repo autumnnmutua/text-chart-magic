@@ -52,4 +52,22 @@ describe('orthogonal edge routing', () => {
     expect(Number.isFinite(midpoint.x)).toBe(true);
     expect(Number.isFinite(midpoint.y)).toBe(true);
   });
+
+  it('keeps a parallel lane visible when endpoints are horizontally aligned', () => {
+    const base = routeOrthogonalEdge({ x: 0, y: 0 }, { x: 100, y: 0 }, []);
+    const offset = routeOrthogonalEdge({ x: 0, y: 0 }, { x: 100, y: 0 }, [], {
+      laneOffset: 12
+    });
+
+    expect(base).toHaveLength(2);
+    expect(offset.length).toBeGreaterThan(2);
+    expect(offset).not.toEqual(base);
+  });
+
+  it('renders a visible loop when both endpoints share one anchor', () => {
+    const route = routeOrthogonalEdge({ x: 20, y: 30 }, { x: 20, y: 30 }, []);
+
+    expect(route.length).toBeGreaterThan(2);
+    expect(route[0]).toEqual(route.at(-1));
+  });
 });

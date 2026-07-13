@@ -5,6 +5,10 @@
   import WorkspacePanelHost from '$lib/components/workspace/WorkspacePanelHost.svelte';
   import ColorPickerPanel from '$lib/components/ColorPickerPanel.svelte';
   import {
+    cancelConnectionCreation,
+    startConnectionCreation
+  } from '$lib/util/connectionEditor.svelte';
+  import {
     closeCommandPalette,
     commandRegistry,
     openCommandPalette,
@@ -82,6 +86,7 @@
   };
 
   const escapeWorkspace = (): void => {
+    if (cancelConnectionCreation()) return;
     if (commandRegistry.isPaletteOpen) {
       closeCommandPalette();
       return;
@@ -154,6 +159,12 @@
         label: '粘贴元素',
         run: () => undefined,
         shortcut: `${modifier}+V`
+      },
+      {
+        category: '编辑',
+        id: 'add-connection',
+        label: '添加自主箭头',
+        run: startConnectionCreation
       },
       {
         category: '编辑',

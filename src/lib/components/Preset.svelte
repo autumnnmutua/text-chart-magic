@@ -3,13 +3,15 @@
   import { Button, buttonVariants } from '$/components/ui/button';
   import * as Popover from '$/components/ui/popover';
   import { localizedDiagramSamples } from '$/util/diagramSamples';
+  import { investorSamples, type InvestorSample } from '$/util/investorSamples';
   import { getSampleDiagrams, type SampleExample } from '$/util/mermaid';
-  import { loadDiagramCode } from '$lib/util/state.svelte';
+  import { loadDiagramCode, loadDiagramTemplate } from '$lib/util/state.svelte';
   import { clearVisualSelection } from '$lib/util/visualSelection.svelte';
   import { logEvent } from '$lib/util/stats';
   import { cn } from '$lib/utils';
   import ShapesIcon from '~icons/material-symbols/account-tree-outline-rounded';
   import ChevronDownIcon from '~icons/material-symbols/keyboard-arrow-down-rounded';
+  import ShowcaseIcon from '~icons/material-symbols/auto-awesome-outline-rounded';
 
   const samples = { ...getSampleDiagrams(), ...localizedDiagramSamples };
 
@@ -49,6 +51,15 @@
     logEvent('loadSampleDiagram', { diagramType, exampleTitle: example.title });
   };
 
+  const loadInvestorSample = (example: InvestorSample): void => {
+    clearVisualSelection();
+    loadDiagramTemplate(example.state);
+    logEvent('loadSampleDiagram', {
+      diagramType: example.diagramType,
+      exampleTitle: example.title
+    });
+  };
+
   const mainDiagrams = [
     'Flowchart',
     'Class',
@@ -65,6 +76,20 @@
       .sort()
   ];
 </script>
+
+<Card title="精选示例" isOpen isStackable icon={{ component: ShowcaseIcon }}>
+  <div class="grid grid-cols-1 gap-2 p-2 sm:grid-cols-2">
+    {#each investorSamples as example (example.title)}
+      <Button
+        size="sm"
+        variant="secondary"
+        class="h-auto min-h-9 justify-start whitespace-normal text-left normal-case"
+        onclick={() => loadInvestorSample(example)}>
+        {example.title}
+      </Button>
+    {/each}
+  </div>
+</Card>
 
 <Card title="示例图表" isOpen isStackable icon={{ component: ShapesIcon }}>
   <div class="flex h-fit max-h-52 flex-wrap gap-2 overflow-y-auto p-2">

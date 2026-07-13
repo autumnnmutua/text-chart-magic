@@ -2,7 +2,12 @@
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { notify } from '$lib/util/notify';
-  import { replaceDiagramText, updateVisualLayer, validatedState } from '$lib/util/state.svelte';
+  import {
+    replaceDiagramText,
+    updateVisualConnection,
+    updateVisualLayer,
+    validatedState
+  } from '$lib/util/state.svelte';
   import {
     requestVisualFocus,
     visualDocument,
@@ -79,6 +84,12 @@
       return;
     }
     editingId = '';
+    const connection = validatedState.current.visualConnections?.[item.id];
+    if (connection) {
+      if (!updateVisualConnection({ ...connection, label: nextText.slice(0, 240) })) return;
+      notify('箭头文字已更新，可撤回恢复。');
+      return;
+    }
     const range = findVisualTextRange(validatedState.current.code, {
       occurrence: item.occurrence,
       sourceId: item.sourceId,

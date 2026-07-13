@@ -1,11 +1,16 @@
 <script lang="ts">
   import FloatingToolbar from '$lib/components/FloatingToolbar.svelte';
   import { Button } from '$lib/components/ui/button';
+  import {
+    connectionEditor,
+    finishConnectionCreation,
+    startConnectionCreation
+  } from '$lib/util/connectionEditor.svelte';
   import { openCommandPalette } from '$lib/util/commandRegistry.svelte';
   import { closeGlobalSearch, openGlobalSearch } from '$lib/util/globalSearch.svelte';
   import { setSelectionMode, visualSelection } from '$lib/util/visualSelection.svelte';
   import { openWorkspacePanel, toggleWorkspacePanel } from '$lib/util/workspacePanels.svelte';
-  import { Command, Layers, ListChecks, Search } from 'lucide-svelte';
+  import { ArrowUpRight, Command, Layers, ListChecks, Search } from 'lucide-svelte';
 
   const openSearch = (): void => {
     openGlobalSearch();
@@ -39,6 +44,16 @@
       aria-pressed={visualSelection.isSelectionMode}
       onclick={() => setSelectionMode(!visualSelection.isSelectionMode)}>
       <ListChecks class="size-4" />
+    </Button>
+    <Button
+      size="icon"
+      variant={connectionEditor.isCreating ? 'accent' : 'ghost'}
+      title="添加自主箭头"
+      aria-label="添加自主箭头"
+      aria-pressed={connectionEditor.isCreating}
+      onclick={() =>
+        connectionEditor.isCreating ? finishConnectionCreation() : startConnectionCreation()}>
+      <ArrowUpRight class="size-4" />
     </Button>
     <Button
       size="icon"

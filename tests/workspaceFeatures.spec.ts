@@ -154,6 +154,214 @@ test.describe('统一工作区能力', () => {
     await expect(page.locator('#view')).toContainText('乙');
   });
 
+  test('自主箭头支持八点吸附、编辑、端点重连、模块跟随和持久化', async ({ page }) => {
+    await page.goto('/');
+    await waitForDiagram(page);
+    await setEditorCode(
+      page,
+      `block-beta
+  columns 3
+  A["入口"]
+  B["处理"]
+  C["结果"]`
+    );
+    await waitForDiagram(page);
+
+    const quickToolbar = page.getByTestId('workspace-quick-toolbar');
+    await quickToolbar.getByRole('button', { name: '添加自主箭头' }).click();
+    await expect(page.getByTestId('connection-creation-hint')).toContainText('起点');
+    await page.locator('#view g.node[data-style-id="A"]').click({ force: true });
+    await expect(page.getByTestId('connection-creation-hint')).toContainText('终点');
+    await expect(page.locator('#view [data-visual-connection-anchors] circle')).toHaveCount(24);
+    await page.locator('#view g.node[data-style-id="B"]').click({ force: true });
+
+    const connection = page.locator('#view g[data-visual-connection]').first();
+    await expect(connection).toBeVisible();
+    await expect
+      .poll(async () => JSON.stringify((await storedState(page)).visualConnections ?? {}))
+      .toContain('connection-');
+
+    await connection.locator('[data-connection-hit]').click({ force: true });
+    const toolbar = page.getByTestId('connection-toolbar');
+    await expect(toolbar).toBeVisible();
+    await toolbar.getByLabel('箭头文字').fill('异步调用');
+    await toolbar.getByLabel('箭头文字').press('Enter');
+    await expect(connection).toContainText('异步调用');
+    await toolbar.getByRole('button', { name: '双向箭头' }).click();
+    await expect(connection.locator('[data-connection-path]')).toHaveAttribute(
+      'marker-start',
+      /visual-connection/
+    );
+
+    await quickToolbar.getByRole('button', { name: '图层与大纲' }).click();
+    const layers = page.getByTestId('layers-panel');
+    const connectionRow = layers
+      .getByText('异步调用', { exact: true })
+      .locator('xpath=ancestor::div[contains(@class,"group")][1]');
+    await connectionRow.hover();
+    await connectionRow.getByRole('button', { name: '重命名' }).click();
+    await layers.getByLabel('重命名元素').fill('同步调用');
+    await layers.getByLabel('重命名元素').press('Enter');
+    await expect(connection).toContainText('同步调用');
+    await page.keyboard.press('Control+Z');
+    await expect(connection).toContainText('异步调用');
+    await expect(toolbar.getByLabel('箭头文字')).toHaveValue('异步调用');
+    await layers.getByRole('button', { name: '关闭图层' }).click();
+
+    const endpoint = connection.locator('[data-connection-endpoint="target"]');
+    const nodeC = page.locator('#view g.node[data-style-id="C"]');
+    const endpointBox = await endpoint.boundingBox();
+    const nodeCBox = await nodeC.boundingBox();
+    expect(endpointBox).toBeTruthy();
+    expect(nodeCBox).toBeTruthy();
+    if (endpointBox && nodeCBox) {
+      await page.mouse.move(
+        endpointBox.x + endpointBox.width / 2,
+        endpointBox.y + endpointBox.height / 2
+      );
+      await page.mouse.down();
+      await page.mouse.move(nodeCBox.x, nodeCBox.y + nodeCBox.height / 2, { steps: 8 });
+      await page.mouse.up();
+    }
+    await expect
+      .poll(async () => JSON.stringify((await storedState(page)).visualConnections ?? {}))
+      .toContain('"elementId":"C"');
+
+    const pathBeforeMove = await connection.locator('[data-connection-path]').getAttribute('d');
+    const nodeA = page.locator('#view g.node[data-style-id="A"]');
+    const nodeABox = await nodeA.boundingBox();
+    if (nodeABox) {
+      await page.mouse.move(nodeABox.x + nodeABox.width / 2, nodeABox.y + nodeABox.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(
+        nodeABox.x + nodeABox.width / 2 + 90,
+        nodeABox.y + nodeABox.height / 2 + 50,
+        {
+          steps: 6
+        }
+      );
+      await page.mouse.up();
+    }
+    await expect(connection.locator('[data-connection-path]')).not.toHaveAttribute(
+      'd',
+      pathBeforeMove ?? ''
+    );
+    await page.reload();
+    await waitForDiagram(page);
+    await expect(page.locator('#view g[data-visual-connection]')).toContainText('异步调用');
+  });
+
+  test('自主箭头支持自由端、同节点锚点、取消、反向和完整历史', async ({ page }) => {
+    await page.goto('/');
+    await waitForDiagram(page);
+    await setEditorCode(
+      page,
+      `block-beta
+  columns 2
+  A["入口"]
+  B["处理"]`
+    );
+    await waitForDiagram(page);
+
+    const quickToolbar = page.getByTestId('workspace-quick-toolbar');
+    const addConnection = quickToolbar.getByRole('button', { name: '添加自主箭头' });
+    const svg = page.locator('#view svg');
+    const nodeA = page.locator('#view g.node[data-style-id="A"]');
+    const svgBox = await svg.boundingBox();
+    expect(svgBox).toBeTruthy();
+
+    await addConnection.click();
+    await nodeA.click({ force: true });
+    await svg.dispatchEvent('pointerdown', {
+      bubbles: true,
+      button: 0,
+      clientX: (svgBox?.x ?? 0) + 40,
+      clientY: (svgBox?.y ?? 0) + 80,
+      isPrimary: true,
+      pointerId: 41,
+      pointerType: 'mouse'
+    });
+    let connections = await page.evaluate(() => {
+      const state = JSON.parse(localStorage.getItem('codeStore') ?? '{}') as {
+        visualConnections?: Record<
+          string,
+          { source: { elementId?: string }; target: { elementId?: string } }
+        >;
+      };
+      return Object.values(state.visualConnections ?? {});
+    });
+    expect(connections).toHaveLength(1);
+    expect(connections[0].source.elementId).toBe('A');
+    expect(connections[0].target.elementId).toBeUndefined();
+
+    const connection = page.locator('#view g[data-visual-connection]').first();
+    await connection.locator('[data-connection-hit]').click({ force: true });
+    const toolbar = page.getByTestId('connection-toolbar');
+    await toolbar.getByRole('button', { name: '普通连线' }).click();
+    await toolbar.getByRole('button', { name: '交换起点和终点' }).click();
+    await expect
+      .poll(async () => {
+        const state = await storedState(page);
+        return JSON.stringify(state.visualConnections ?? {});
+      })
+      .toContain('"direction":"none"');
+    connections = await page.evaluate(() => {
+      const state = JSON.parse(localStorage.getItem('codeStore') ?? '{}') as {
+        visualConnections?: Record<
+          string,
+          { source: { elementId?: string }; target: { elementId?: string } }
+        >;
+      };
+      return Object.values(state.visualConnections ?? {});
+    });
+    expect(connections[0].source.elementId).toBeUndefined();
+    expect(connections[0].target.elementId).toBe('A');
+
+    await toolbar.getByRole('button', { name: '删除箭头' }).click();
+    await expect(page.locator('#view g[data-visual-connection]')).toHaveCount(0);
+    await page.getByRole('button', { name: '撤回', exact: true }).click();
+    await expect(page.locator('#view g[data-visual-connection]')).toHaveCount(1);
+    await page.getByRole('button', { name: '恢复', exact: true }).click();
+    await expect(page.locator('#view g[data-visual-connection]')).toHaveCount(0);
+
+    await addConnection.click();
+    await nodeA.click({ force: true });
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('connection-creation-hint')).toBeHidden();
+    await expect(page.locator('#view g[data-visual-connection]')).toHaveCount(0);
+
+    await addConnection.click();
+    await nodeA.click({ force: true });
+    await nodeA.click({ force: true });
+    await expect(page.locator('#view g[data-visual-connection]')).toHaveCount(1);
+    const sameNodeConnection = await page.evaluate(() => {
+      const state = JSON.parse(localStorage.getItem('codeStore') ?? '{}') as {
+        visualConnections?: Record<
+          string,
+          {
+            source: { anchor?: string; elementId?: string };
+            target: { anchor?: string; elementId?: string };
+          }
+        >;
+      };
+      return Object.values(state.visualConnections ?? {})[0];
+    });
+    expect(sameNodeConnection.source.elementId).toBe('A');
+    expect(sameNodeConnection.target.elementId).toBe('A');
+    expect(sameNodeConnection.source.anchor).not.toBe(sameNodeConnection.target.anchor);
+
+    await page.keyboard.press('Control+f');
+    const searchPanel = page.getByTestId('global-search-panel');
+    await expect(searchPanel).toBeVisible();
+    await searchPanel.getByLabel('搜索图表文字').fill('关系');
+    await expect(searchPanel).toContainText('箭头文字');
+    await searchPanel.getByLabel('替换文字').fill('模块内循环');
+    await searchPanel.getByRole('button', { name: '替换当前' }).click();
+    await expect(page.locator('#view g[data-visual-connection]')).toContainText('模块内循环');
+    await page.getByRole('button', { name: '撤回', exact: true }).click();
+    await expect(page.locator('#view g[data-visual-connection]')).toContainText('关系');
+  });
+
   test('框选模式可以一次选择画布中的多个自由模块', async ({ page }) => {
     await page.goto('/');
     await waitForDiagram(page);
@@ -309,6 +517,23 @@ test.describe('统一工作区能力', () => {
       await page.getByLabel('图中文字编辑').fill('手机直接编辑');
       await page.keyboard.press('Enter');
       await expect(page.locator('#view')).toContainText('手机直接编辑');
+
+      await mobileToolbar.getByRole('button', { name: '箭头', exact: true }).click();
+      await page.locator('#view').getByText('手机直接编辑', { exact: true }).tap({ force: true });
+      await page.locator('#view').getByText('生成图表', { exact: true }).tap({ force: true });
+      await expect(page.locator('#view g[data-visual-connection]')).toHaveCount(1);
+      await expect
+        .poll(async () => JSON.stringify((await storedState(page)).visualConnections ?? {}))
+        .toContain('connection-');
+
+      const mobileConnection = page.locator('#view g[data-visual-connection]').first();
+      await mobileConnection.locator('[data-connection-hit]').tap({ force: true });
+      await mobileToolbar.getByRole('button', { name: '文字' }).click();
+      const connectionLabel = page.getByLabel('箭头文字');
+      await expect(connectionLabel).toBeFocused();
+      await connectionLabel.fill('手机箭头说明');
+      await connectionLabel.press('Enter');
+      await expect(mobileConnection).toContainText('手机箭头说明');
 
       const multiSelect = mobileToolbar.getByRole('button', { name: '多选' });
       await multiSelect.click();

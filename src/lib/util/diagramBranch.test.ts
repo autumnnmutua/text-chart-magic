@@ -26,6 +26,52 @@ const requireRange = (range: ReturnType<typeof findVisibleTextRange>) => {
 };
 
 describe('special diagram branch strategies', () => {
+  it('does not report a fake branch when the diagram or target is unsupported', () => {
+    expect(createDiagramBranch({ code: 'info\n  showInfo', label: '不存在' })).toBeUndefined();
+    expect(
+      createDiagramBranch({ code: 'flowchart LR\n  A[开始]', label: '不存在', sourceId: 'missing' })
+    ).toBeUndefined();
+  });
+
+  it.each([
+    ['mindmap', 'mindmap\n  root((根节点))'],
+    ['sequence', 'sequenceDiagram\n  participant A as 用户'],
+    ['class', 'classDiagram\n  class User'],
+    ['state', 'stateDiagram-v2\n  A --> B'],
+    ['gantt', 'gantt\n  section 开发\n  编码 :task1, 2026-01-01, 1d'],
+    ['treemap', 'treemap-beta\n  "产品"\n    "编辑器": 1'],
+    ['packet', 'packet\n  0-7: "类型"'],
+    ['timeline', 'timeline\n  2026 : 发布'],
+    ['C4', 'C4Container\n  System(system, "系统")'],
+    [
+      'requirement',
+      'requirementDiagram\n  requirement req {\n    id: R1\n    text: "需求"\n    risk: low\n    verifymethod: test\n  }'
+    ],
+    ['architecture', 'architecture-beta\n  service api(server)[API]'],
+    ['ER', 'erDiagram\n  USER {\n    string id PK\n  }'],
+    ['Wardley', 'wardley-beta\n  component API [0.5, 0.5]'],
+    ['ZenUML', 'zenuml\n  @Actor Customer'],
+    ['Git', 'gitGraph\n  commit id: "初始"'],
+    ['block', 'block-beta\n  A["模块"]']
+  ])('does not attach a %s branch to a fallback node when selection is stale', (_name, code) => {
+    expect(createDiagramBranch({ code, label: '已经不存在', sourceId: 'missing' })).toBeUndefined();
+  });
+
+  it('attaches a Sankey expansion to the selected flow instead of an unrelated pair', async () => {
+    const code = 'sankey-beta\n"访问","注册",10';
+    const added = createDiagramBranch({ code, label: '注册' })?.code ?? '';
+    expect(added).toContain('"注册","新分支",1');
+    await expect(parse(added)).resolves.toBeDefined();
+  });
+
+  it('adds a sequence branch from an implicitly declared participant', async () => {
+    const code = 'sequenceDiagram\n  Alice->>Bob: 你好';
+    const added = createDiagramBranch({ code, label: 'Alice', sourceId: 'actor-0' })?.code ?? '';
+    expect(added).toContain('participant Branch1 as 新分支');
+    expect(added).toContain('Alice->>Branch1: 新分支');
+    await expect(parse(added)).resolves.toBeDefined();
+  });
+
   it('edits a node label rather than its identical source id', () => {
     const code = 'flowchart LR\n  A[A] --> B[目标]';
     const range = requireRange(findVisualTextRange(code, { sourceId: 'A', text: 'A' }));
@@ -662,6 +708,14 @@ component Product [0.80, 0.50]`;
     await expect(parse(renamed)).resolves.toBeDefined();
     const removed = removeDiagramElementCode(renamed, { text: '支付' }) ?? '';
     expect(removed).not.toContain('支付');
+
+    const addedFromRenderedId =
+      createDiagramBranch({
+        code: initial,
+        label: 'Product',
+        sourceId: 'wardley-component-1'
+      })?.code ?? '';
+    expect(addedFromRenderedId).toContain('Product -> Component1');
   });
 
   it('adds editable and removable ZenUML steps without changing its outer structure', async () => {

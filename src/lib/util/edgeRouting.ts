@@ -64,6 +64,16 @@ export const routeOrthogonalEdge = (
     padding = 10
   }: { laneOffset?: number; margin?: number; padding?: number } = {}
 ): RoutePoint[] => {
+  if (start.x === end.x && start.y === end.y) {
+    const loop = margin + Math.abs(laneOffset);
+    return [
+      start,
+      { x: start.x + loop, y: start.y },
+      { x: start.x + loop, y: start.y + loop },
+      { x: start.x, y: start.y + loop },
+      end
+    ];
+  }
   const expanded = obstacles.map((rect) => expandRect(rect, padding));
   const middleX = (start.x + end.x) / 2 + laneOffset;
   const middleY = (start.y + end.y) / 2 + laneOffset;
@@ -84,7 +94,9 @@ export const routeOrthogonalEdge = (
     [start, { x: start.x, y: bottom }, { x: end.x, y: bottom }, end],
     [start, { x: left, y: start.y }, { x: left, y: end.y }, end],
     [start, { x: right, y: start.y }, { x: right, y: end.y }, end]
-  ].map(compactPath);
+  ]
+    .map(compactPath)
+    .filter((path) => laneOffset === 0 || path.length > 2);
   return candidates.sort((leftPath, rightPath) => {
     const score = (path: RoutePoint[]) =>
       collisionCount(path, expanded) * 1_000_000 + pathLength(path) + path.length * 16;

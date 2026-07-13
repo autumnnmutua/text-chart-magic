@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getSampleDiagrams, parse } from './mermaid';
+import { getSampleDiagrams, parse, restorePreparedLabels } from './mermaid';
 
 describe('getSampleDiagrams', () => {
   const samples = getSampleDiagrams();
@@ -40,5 +40,16 @@ component 支付网关 [0.45, 0.70]
 用户 -> 支付
 支付 -> 支付网关`)
     ).resolves.toBeTruthy();
+  });
+
+  it('restores double-digit architecture label tokens without prefix collisions', () => {
+    const labels = Array.from({ length: 12 }, (_, index) => `中文服务${index + 1}`);
+    const tokens = new Map(
+      labels.map((label, index) => [`A${index.toString(36).padStart(3, '0')}A`, label])
+    );
+    const restored = restorePreparedLabels([...tokens.keys()].join('|'), tokens);
+
+    expect(restored).toBe(labels.join('|'));
+    expect(restored).not.toMatch(/A\w{3}A/);
   });
 });

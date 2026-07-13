@@ -9,7 +9,10 @@ export interface EditorOptions {
 export async function setEditorCode(
   page: Page,
   code: string,
-  { waitForRender = true }: { waitForRender?: boolean } = {}
+  {
+    waitForPersist = true,
+    waitForRender = true
+  }: { waitForPersist?: boolean; waitForRender?: boolean } = {}
 ): Promise<void> {
   const renderMarker = `before-editor-update-${Date.now()}-${Math.random()}`;
   const previousSvg = page.locator('#view svg').first();
@@ -20,22 +23,47 @@ export async function setEditorCode(
       renderMarker
     );
   }
-  await page.locator('#editor:visible, .cm-content:visible').first().click();
-  await page.keyboard.press('Control+A');
-  await page.keyboard.insertText(code);
-  await page.waitForFunction((expected) => {
-    const saved = window.localStorage.getItem('codeStore');
-    const normalize = (value: string) =>
-      value
-        .replace(/\r/g, '')
-        .split('\n')
-        .map((line) => line.trim())
-        .join('\n')
-        .trim();
-    return saved
-      ? normalize((JSON.parse(saved) as { code: string }).code) === normalize(expected)
-      : false;
-  }, code);
+  let persisted = !waitForPersist;
+  for (let attempt = 0; attempt < 3 && !persisted; attempt += 1) {
+    await page.locator('#editor:visible, .cm-content:visible').first().click();
+    await page.keyboard.press('Control+A');
+    await page.keyboard.insertText(code);
+    try {
+      await page.waitForFunction(
+        (expected) => {
+          const saved = window.localStorage.getItem('codeStore');
+          const normalize = (value: string) =>
+            value
+              .replace(/\r/g, '')
+              .split('\n')
+              .map((line) => line.trim())
+              .join('\n')
+              .trim();
+          return saved
+            ? normalize((JSON.parse(saved) as { code: string }).code) === normalize(expected)
+            : false;
+        },
+        code,
+        { timeout: 5_000 }
+      );
+      persisted = true;
+    } catch {
+      await page.waitForTimeout(100);
+    }
+  }
+  if (!waitForPersist) {
+    await page.locator('#editor:visible, .cm-content:visible').first().click();
+    await page.keyboard.press('Control+A');
+    await page.keyboard.insertText(code);
+  } else if (!persisted) {
+    const current = await page.evaluate(() => {
+      const saved = window.localStorage.getItem('codeStore');
+      return saved ? (JSON.parse(saved) as { code?: string }).code : undefined;
+    });
+    throw new Error(
+      `Editor input was replaced before the expected source could persist. Current source: ${current ?? '<missing>'}`
+    );
+  }
   if (hadPreviousSvg) {
     await page.waitForFunction(
       ({ expected, marker }) => {

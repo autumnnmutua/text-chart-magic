@@ -11,6 +11,7 @@ export const diagramStateKey = (state: State): string =>
     mermaid: state.mermaid,
     rough: state.rough,
     snapToGrid: state.snapToGrid ?? true,
+    visualConnections: state.visualConnections ?? {},
     visualLayers: state.visualLayers ?? {},
     visualPositions: state.visualPositions ?? {},
     visualStyles: state.visualStyles ?? {}

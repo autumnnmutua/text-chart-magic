@@ -29,6 +29,7 @@ export class PanZoomState {
     this.isDirty = false;
     let hammer: HammerManager | undefined;
     let preventTouchMove: ((event: TouchEvent) => void) | undefined;
+    let touchMoveElement: SVGElement | undefined;
     this.pzoom = panzoom(diagramView, {
       center: true,
       controlIconsEnabled: false,
@@ -74,13 +75,15 @@ export class PanZoomState {
           preventTouchMove = (event: TouchEvent) => {
             event.preventDefault();
           };
-          options.svgElement.addEventListener('touchmove', preventTouchMove, { passive: false });
+          touchMoveElement = options.svgElement;
+          touchMoveElement.addEventListener('touchmove', preventTouchMove, { passive: false });
         },
         destroy: () => {
           hammer?.destroy();
-          if (preventTouchMove) {
-            diagramView.removeEventListener('touchmove', preventTouchMove);
+          if (preventTouchMove && touchMoveElement) {
+            touchMoveElement.removeEventListener('touchmove', preventTouchMove);
             preventTouchMove = undefined;
+            touchMoveElement = undefined;
           }
         }
       },

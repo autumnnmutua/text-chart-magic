@@ -31,6 +31,14 @@ const getServiceGroup = (svg: SVGSVGElement, id: string): SVGGElement | undefine
     (group) => group.id.match(/-service-(.+)$/)?.[1] === id
   );
 
+export const findArchitectureEdgePath = <T extends { id: string }>(
+  paths: readonly T[],
+  source: string,
+  target: string
+): T | undefined =>
+  paths.find((path) => path.id.includes(`L_${source}_${target}_`)) ??
+  paths.find((path) => path.id.includes(`L_${target}_${source}_`));
+
 const getNodeBounds = (group: SVGGElement, position: VisualPosition | undefined): NodeBounds => {
   const base = parseTranslate(group.dataset.baseTransform);
   const offset = position ?? { x: 0, y: 0 };
@@ -74,9 +82,10 @@ const updateArchitectureEdges = (
     if (movedId && source !== movedId && target !== movedId) continue;
     const sourceGroup = getServiceGroup(svg, source);
     const targetGroup = getServiceGroup(svg, target);
-    const path = [...svg.querySelectorAll<SVGPathElement>('.architecture-edges path.edge')].find(
-      (item) =>
-        item.id.includes(`L_${source}_${target}_`) || item.id.includes(`L_${target}_${source}_`)
+    const path = findArchitectureEdgePath(
+      [...svg.querySelectorAll<SVGPathElement>('.architecture-edges path.edge')],
+      source,
+      target
     );
     if (!sourceGroup || !targetGroup || !path) continue;
     const sourceBounds = getNodeBounds(sourceGroup, positions[source]);

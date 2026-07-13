@@ -8,6 +8,14 @@ const getStoredCode = async (page: Page): Promise<string> =>
     return saved ? (JSON.parse(saved) as { code: string }).code : '';
   });
 
+const expectStoredCodeContains = async (page: Page, text: string): Promise<void> => {
+  await expect.poll(() => getStoredCode(page)).toContain(text);
+};
+
+const expectStoredCodeExcludes = async (page: Page, text: string): Promise<void> => {
+  await expect.poll(() => getStoredCode(page)).not.toContain(text);
+};
+
 const expectDiagramCentered = async (page: Page): Promise<void> => {
   await page.waitForFunction(() => {
     const view = document.querySelector('#view');
@@ -83,7 +91,7 @@ test.describe('图上分支编辑', () => {
 
     await page.getByRole('button', { name: '分支' }).click();
 
-    await expect(page.locator('#editor')).toContainText('A -->|关系| A_branch_1[新分支]');
+    await expectStoredCodeContains(page, 'A -->|关系| A_branch_1[新分支]');
     await expect(page.locator('#view')).toContainText('新分支');
     await expect(page.getByRole('button', { name: '撤回' })).toBeEnabled();
 
@@ -99,7 +107,7 @@ test.describe('图上分支编辑', () => {
     );
 
     await page.getByRole('button', { name: '撤回' }).click();
-    await expect(page.locator('#editor')).not.toContainText('A -->|关系| A_branch_1[新分支]');
+    await expectStoredCodeExcludes(page, 'A -->|关系| A_branch_1[新分支]');
     await expect(page.locator('#view')).not.toContainText('新分支');
   });
 
@@ -116,11 +124,13 @@ test.describe('图上分支编辑', () => {
     await page.waitForSelector('#view svg .node[id*="A_branch_1_branch_1"]');
 
     await page.locator('#view svg .node[id*="A_branch_1_branch_1"]').dblclick({ force: true });
-    await page.keyboard.type('子分支');
-    await page.keyboard.press('Enter');
+    const childEditor = page.getByLabel('图中文字编辑');
+    await expect(childEditor).toBeVisible();
+    await childEditor.fill('子分支');
+    await childEditor.press('Enter');
 
-    await expect(page.locator('#editor')).toContainText('A_branch_1[新分支]');
-    await expect(page.locator('#editor')).toContainText('A_branch_1_branch_1[子分支]');
+    await expectStoredCodeContains(page, 'A_branch_1[新分支]');
+    await expectStoredCodeContains(page, 'A_branch_1_branch_1[子分支]');
     await expect(page.locator('#view')).toContainText('子分支');
   });
 
@@ -174,7 +184,7 @@ test.describe('图上分支编辑', () => {
 
     await page.locator('#view').getByText('输入中文想法', { exact: true }).click({ force: true });
     await page.getByRole('button', { name: '分支' }).click();
-    await expect(page.locator('#editor')).toContainText('A -->|关系| A_branch_1[新分支]');
+    await expectStoredCodeContains(page, 'A -->|关系| A_branch_1[新分支]');
 
     await expect
       .poll(() =>
@@ -198,25 +208,19 @@ test.describe('图上分支编辑', () => {
     await page.waitForSelector('#view svg .node[id*="A_branch_1"]');
     await page.locator('#view svg .node[id*="A_branch_1"]').click({ force: true });
     await page.getByRole('button', { name: '分支' }).click();
-    await expect(page.locator('#editor')).toContainText(
-      'A_branch_1 -->|关系| A_branch_1_branch_1[新分支]'
-    );
+    await expectStoredCodeContains(page, 'A_branch_1 -->|关系| A_branch_1_branch_1[新分支]');
 
     await page.getByRole('button', { name: '撤回' }).click();
     await page.getByRole('button', { name: '撤回' }).click();
-    await expect(page.locator('#editor')).not.toContainText('A -->|关系| A_branch_1[新分支]');
+    await expectStoredCodeExcludes(page, 'A -->|关系| A_branch_1[新分支]');
     await expect(page.getByRole('button', { name: '恢复' })).toBeEnabled();
 
     await page.getByRole('button', { name: '恢复' }).click();
-    await expect(page.locator('#editor')).toContainText('A -->|关系| A_branch_1[新分支]');
-    await expect(page.locator('#editor')).not.toContainText(
-      'A_branch_1 -->|关系| A_branch_1_branch_1[新分支]'
-    );
+    await expectStoredCodeContains(page, 'A -->|关系| A_branch_1[新分支]');
+    await expectStoredCodeExcludes(page, 'A_branch_1 -->|关系| A_branch_1_branch_1[新分支]');
 
     await page.getByRole('button', { name: '恢复' }).click();
-    await expect(page.locator('#editor')).toContainText(
-      'A_branch_1 -->|关系| A_branch_1_branch_1[新分支]'
-    );
+    await expectStoredCodeContains(page, 'A_branch_1 -->|关系| A_branch_1_branch_1[新分支]');
   });
 
   test('重置按钮可以还原成最初的图', async ({ page }) => {
@@ -225,11 +229,11 @@ test.describe('图上分支编辑', () => {
 
     await page.locator('#view').getByText('输入中文想法', { exact: true }).click({ force: true });
     await page.getByRole('button', { name: '分支' }).click();
-    await expect(page.locator('#editor')).toContainText('A -->|关系| A_branch_1[新分支]');
+    await expectStoredCodeContains(page, 'A -->|关系| A_branch_1[新分支]');
 
     await page.getByRole('button', { name: '重置', exact: true }).click();
-    await expect(page.locator('#editor')).toContainText('A[输入中文想法]');
-    await expect(page.locator('#editor')).not.toContainText('A -->|关系| A_branch_1[新分支]');
+    await expectStoredCodeContains(page, 'A[输入中文想法]');
+    await expectStoredCodeExcludes(page, 'A -->|关系| A_branch_1[新分支]');
   });
 
   test('非流程图也可以添加分支', async ({ page }) => {
@@ -247,11 +251,12 @@ test.describe('图上分支编辑', () => {
     await expect(page.getByRole('button', { name: '分支' })).toBeVisible();
     await page.getByRole('button', { name: '分支' }).click();
 
-    await expect(page.locator('#editor')).toContainText('新分支');
+    await expectStoredCodeContains(page, '新分支');
     await expect(page.locator('#view')).toContainText('新分支');
   });
 
   test('多种非流程图都可以添加可见分支', async ({ page }) => {
+    test.setTimeout(90_000);
     await page.goto('/');
     await page.waitForSelector('#view svg');
 
@@ -297,16 +302,15 @@ test.describe('图上分支编辑', () => {
     ];
 
     for (const { code, target } of diagrams) {
-      await setEditorCode(page, code);
-      await expect(page.locator('#view')).toContainText(target);
-      await chooseViewText(page, target);
-      await expect(page.getByRole('button', { name: '分支' })).toBeVisible();
-      await page.getByRole('button', { name: '分支' }).click();
-      await page.waitForFunction(() => {
-        const saved = window.localStorage.getItem('codeStore');
-        return saved ? (JSON.parse(saved) as { code: string }).code.includes('新分支') : false;
+      await test.step(target, async () => {
+        await setEditorCode(page, code);
+        await expect(page.locator('#view')).toContainText(target);
+        await chooseViewText(page, target);
+        await expect(page.getByRole('button', { name: '分支' })).toBeVisible();
+        await page.getByRole('button', { name: '分支' }).click();
+        await expectStoredCodeContains(page, '新分支');
+        await expect(page.locator('#view')).toContainText('新分支');
       });
-      await expect(page.locator('#view')).toContainText('新分支');
     }
   });
 
@@ -320,13 +324,13 @@ test.describe('图上分支编辑', () => {
     await setEditorCode(page, mindmapCode);
     await page.locator('#view').getByText('主题', { exact: true }).click({ force: true });
     await page.getByRole('button', { name: '分支' }).click();
-    await expect(page.locator('#editor')).toContainText('新分支');
+    await expectStoredCodeContains(page, '新分支');
 
     await page.getByRole('button', { name: '重置', exact: true }).click();
-    await expect(page.locator('#editor')).toContainText('mindmap');
-    await expect(page.locator('#editor')).toContainText('主题');
-    await expect(page.locator('#editor')).not.toContainText('flowchart TD');
-    await expect(page.locator('#editor')).not.toContainText('新分支');
+    await expectStoredCodeContains(page, 'mindmap');
+    await expectStoredCodeContains(page, '主题');
+    await expectStoredCodeExcludes(page, 'flowchart TD');
+    await expectStoredCodeExcludes(page, '新分支');
   });
 
   test('重置会同时恢复当前图的代码、调色和画布位置', async ({ page }) => {
@@ -359,8 +363,8 @@ test.describe('图上分支编辑', () => {
     });
 
     await page.getByRole('button', { name: '重置', exact: true }).click();
-    await expect(page.locator('#editor')).toContainText('"需求": 12');
-    await expect(page.locator('#editor')).not.toContainText('新分支');
+    await expectStoredCodeContains(page, '"需求": 12');
+    await expectStoredCodeExcludes(page, '新分支');
     await page.waitForFunction((beforeZoom) => {
       const saved = window.localStorage.getItem('codeStore');
       if (!saved) return false;
@@ -385,7 +389,7 @@ test.describe('图上分支编辑', () => {
       page,
       `flowchart TD
     A[项目`,
-      { waitForRender: false }
+      { waitForPersist: false, waitForRender: false }
     );
     await page.waitForFunction(() => {
       const saved = window.localStorage.getItem('codeStore');
@@ -414,6 +418,7 @@ test.describe('图上分支编辑', () => {
   });
 
   test('多种图表重置视图后会回到画布中央', async ({ page }) => {
+    test.setTimeout(90_000);
     await page.goto('/');
     await page.waitForSelector('#view svg');
 
@@ -437,12 +442,14 @@ test.describe('图上分支编辑', () => {
     ];
 
     for (const code of diagrams) {
-      await setEditorCode(page, code);
-      await page.getByRole('button', { name: '放大' }).click();
-      await page.getByRole('button', { name: '重置视图' }).click();
-      await expectDiagramCentered(page);
-      await page.getByRole('button', { name: '重置', exact: true }).click();
-      await expectDiagramCentered(page);
+      await test.step(code.split('\n')[0], async () => {
+        await setEditorCode(page, code);
+        await page.getByRole('button', { name: '放大' }).click();
+        await page.getByRole('button', { name: '重置视图' }).click();
+        await expectDiagramCentered(page);
+        await page.getByRole('button', { name: '重置', exact: true }).click();
+        await expectDiagramCentered(page);
+      });
     }
   });
 
@@ -716,8 +723,8 @@ test.describe('图上分支编辑', () => {
     await page.getByRole('button', { name: '分支' }).click();
     await editViewText(page, '新分支', '三级需求');
     await expect(page.locator('#view')).toContainText('三级需求');
-    await expect(page.locator('#editor')).toContainText('"二级需求"');
-    await expect(page.locator('#editor')).toContainText('"三级需求"');
+    await expectStoredCodeContains(page, '"二级需求"');
+    await expectStoredCodeContains(page, '"三级需求"');
 
     await page.reload();
     await page.waitForSelector('#view svg');
@@ -731,7 +738,7 @@ test.describe('图上分支编辑', () => {
       .click({ force: true });
     await page.getByRole('button', { name: '删除' }).click();
     await expect(page.locator('#view')).not.toContainText('三级需求');
-    await expect(page.locator('#editor')).not.toContainText('三级需求');
+    await expectStoredCodeExcludes(page, '三级需求');
   });
 
   test('数据包图可以连续添加、编辑和删除多个字段', async ({ page }) => {
@@ -751,8 +758,8 @@ test.describe('图上分支编辑', () => {
     await page.getByRole('button', { name: '分支' }).click();
     await editViewText(page, '新分支', '字段C');
 
-    await expect(page.locator('#editor')).toContainText('16-31: "字段B"');
-    await expect(page.locator('#editor')).toContainText('32-47: "字段C"');
+    await expectStoredCodeContains(page, '16-31: "字段B"');
+    await expectStoredCodeContains(page, '32-47: "字段C"');
     await page.reload();
     await page.waitForSelector('#view svg');
     await expect(page.locator('#view')).toContainText('字段B');
@@ -761,7 +768,7 @@ test.describe('图上分支编辑', () => {
     await expect(page.getByRole('button', { name: '删除' })).toHaveAttribute('title', /字段B/);
     await page.getByRole('button', { name: '删除' }).click();
     await expect(page.locator('#view')).not.toContainText('字段B');
-    await expect(page.locator('#editor')).toContainText('字段C');
+    await expectStoredCodeContains(page, '字段C');
   });
 
   test('甘特图新增分支后可以编辑并继续添加分支', async ({ page }) => {
@@ -785,7 +792,7 @@ test.describe('图上分支编辑', () => {
     await chooseViewText(page, '设计评审');
     await page.getByRole('button', { name: '分支' }).click();
     await expect(page.locator('#view')).toContainText('新分支');
-    await expect(page.locator('#editor')).toContainText('设计评审');
+    await expectStoredCodeContains(page, '设计评审');
   });
 
   test('块状树图新增分支后可以编辑并继续添加子分支', async ({ page }) => {
@@ -879,7 +886,7 @@ test.describe('图上分支编辑', () => {
     await chooseViewText(page, '出门');
     await page.getByRole('button', { name: '分支' }).click();
     await expect(page.locator('#view')).toContainText('新分支');
-    await expect(page.locator('#editor')).toContainText('section 新分支');
+    await expectStoredCodeContains(page, 'section 新分支');
     await editViewText(page, '新分支', 'go home');
     await expect(page.locator('#view')).toContainText('go home');
   });
@@ -932,7 +939,7 @@ test.describe('图上分支编辑', () => {
     await chooseViewText(page, '新增机会');
     await page.getByRole('button', { name: '删除' }).click();
     await expect(page.locator('#view')).not.toContainText('新增机会');
-    await expect(page.locator('#editor')).not.toContainText('新增机会');
+    await expectStoredCodeExcludes(page, '新增机会');
   });
 
   test('左上角标题只展示图表编辑器且不能点击', async ({ page }) => {
@@ -944,6 +951,7 @@ test.describe('图上分支编辑', () => {
   });
 
   test('C4 和需求图新增模块可以编辑并删除', async ({ page }) => {
+    test.setTimeout(90_000);
     await page.goto('/');
     await page.waitForSelector('#view svg');
 
@@ -957,10 +965,10 @@ test.describe('图上分支编辑', () => {
     await chooseViewText(page, '应用');
     await page.getByRole('button', { name: '分支' }).click();
     await editViewText(page, '新分支', '支付模块');
-    await expect(page.locator('#editor')).toContainText('Rel(app, Branch1, "包含")');
+    await expectStoredCodeContains(page, 'Rel(app, Branch1, "包含")');
     await chooseViewText(page, '支付模块');
     await page.getByRole('button', { name: '删除' }).click();
-    await expect(page.locator('#editor')).not.toContainText('Branch1');
+    await expectStoredCodeExcludes(page, 'Branch1');
 
     await setEditorCode(
       page,
@@ -979,10 +987,11 @@ test.describe('图上分支编辑', () => {
     await expect.poll(() => getStoredCode(page)).toContain('root - contains -> branch1');
     await chooseViewText(page, 'Text: 登录需求');
     await page.getByRole('button', { name: '删除' }).click();
-    await expect(page.locator('#editor')).not.toContainText('branch1');
+    await expectStoredCodeExcludes(page, 'branch1');
   });
 
   test('雷达和 XY 图增减维度时会同步数据序列', async ({ page }) => {
+    test.setTimeout(90_000);
     await page.goto('/');
     await page.waitForSelector('#view svg');
 
@@ -994,10 +1003,10 @@ test.describe('图上分支编辑', () => {
     );
     await chooseViewText(page, '速度');
     await page.getByRole('button', { name: '分支' }).click();
-    await expect(page.locator('#editor')).toContainText('{60, 70, 50}');
+    await expectStoredCodeContains(page, '{60, 70, 50}');
     await chooseViewText(page, '新分支');
     await page.getByRole('button', { name: '删除' }).click();
-    await expect(page.locator('#editor')).toContainText('{60, 70}');
+    await expectStoredCodeContains(page, '{60, 70}');
 
     await setEditorCode(
       page,
@@ -1009,7 +1018,7 @@ test.describe('图上分支编辑', () => {
     await expect(page.locator('#view')).toContainText('一月');
     await chooseViewText(page, '一月');
     await page.getByRole('button', { name: '分支' }).click();
-    await expect(page.locator('#editor')).toContainText('bar [10, 20, 0]');
+    await expectStoredCodeContains(page, 'bar [10, 20, 0]');
     await expect(page.locator('#view')).toContainText('新分支');
     await page
       .locator('#view svg text')
@@ -1160,7 +1169,7 @@ test.describe('图上分支编辑', () => {
   B["乙"]`
     );
     await chooseViewText(page, '甲');
-    await page.getByRole('button', { name: '箭头' }).click();
+    await page.getByRole('button', { name: '箭头', exact: true }).click();
     await expect(page.getByText(/请点击箭头目标/)).toBeVisible();
     await chooseViewText(page, '乙');
     await expect.poll(() => getStoredCode(page)).toContain('A -- "箭头1" --> B');

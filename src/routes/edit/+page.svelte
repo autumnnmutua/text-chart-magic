@@ -108,19 +108,21 @@
         autoSaveId="liveEditor"
         class="gap-4 p-2 pt-0 sm:gap-0 sm:p-6 sm:pt-0">
         <Resizable.Pane bind:this={editorPane} defaultSize={30} minSize={15}>
-          <div class="flex h-full flex-col gap-4 sm:gap-6">
-            {#if visualSelection.isColorPanelOpen && !isMobile}
-              <ColorPickerPanel />
-            {:else}
-              <Card
-                onselect={tabSelectHandler}
-                isOpen
-                tabs={editorTabs}
-                activeTabID={validatedState.current.editorMode}
-                isClosable={false}>
-                <Editor {isMobile} />
-              </Card>
-            {/if}
+          <div class="flex h-full min-h-0 flex-col gap-4 overflow-y-auto pr-1 sm:gap-6">
+            <div class="flex min-h-40 shrink-0 flex-col">
+              {#if visualSelection.isColorPanelOpen && !isMobile}
+                <ColorPickerPanel />
+              {:else}
+                <Card
+                  onselect={tabSelectHandler}
+                  isOpen
+                  tabs={editorTabs}
+                  activeTabID={validatedState.current.editorMode}
+                  isClosable={false}>
+                  <Editor {isMobile} />
+                </Card>
+              {/if}
+            </div>
 
             <div class="group flex flex-wrap justify-between gap-4 sm:gap-6">
               <Preset />

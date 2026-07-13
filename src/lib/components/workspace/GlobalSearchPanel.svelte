@@ -7,6 +7,7 @@
     moveGlobalSearchResult,
     replaceAllSearchResults,
     replaceCurrentSearchResult,
+    selectGlobalSearchResult,
     setGlobalReplacement,
     setGlobalSearchCaseSensitive,
     setGlobalSearchQuery,
@@ -145,12 +146,7 @@
           'mb-1 flex w-full items-start gap-2 rounded-md px-2 py-2 text-left text-xs',
           index === globalSearch.currentIndex ? 'bg-primary' : 'hover:bg-muted'
         ]}
-        onclick={() => {
-          const distance = index - globalSearch.currentIndex;
-          const direction = distance < 0 ? -1 : 1;
-          for (let step = 0; step < Math.abs(distance); step += 1)
-            moveGlobalSearchResult(direction);
-        }}>
+        onclick={() => selectGlobalSearchResult(index)}>
         <span class="mt-0.5 min-w-6 text-muted-foreground">{index + 1}</span>
         <span class="wrap-break-word">{result.containerText}</span>
       </button>

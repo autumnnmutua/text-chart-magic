@@ -8,6 +8,9 @@ import mermaid from 'mermaid';
 mermaid.registerLayoutLoaders([...elkLayouts, ...tidyTreeLayouts]);
 const init = mermaid.registerExternalDiagrams([zenuml]);
 
+const shortLabelToken = (namespace: 'A' | 'S' | 'W', index: number): string =>
+  `${namespace}${index.toString(36).padStart(3, '0')}${namespace}`;
+
 const prepareArchitectureCode = (source: string) => {
   const labels = new Map<string, string>();
   if (!/^\s*architecture-beta\b/im.test(source)) return { code: source, labels };
@@ -16,7 +19,7 @@ const prepareArchitectureCode = (source: string) => {
     /^(\s*(?:group|service)\s+[^\n]+?\[)([^\]\n]+)(\])/gim,
     (_line, prefix: string, label: string, suffix: string) => {
       if (/^[\x20-\x7E]+$/.test(label)) return `${prefix}${label}${suffix}`;
-      const token = `ARCH_LABEL_${index++}`;
+      const token = shortLabelToken('A', index++);
       labels.set(token, label.replace(/^"|"$/g, ''));
       return `${prefix}${token}${suffix}`;
     }
@@ -36,7 +39,7 @@ const prepareWardleyCode = (source: string) => {
   ].sort((left, right) => right.length - left.length);
   let code = source;
   for (const [index, label] of componentLabels.entries()) {
-    const token = `WARDLEY_COMPONENT_${index}`;
+    const token = shortLabelToken('W', index);
     labels.set(token, label);
     code = code.replaceAll(label, token);
   }
@@ -58,7 +61,7 @@ const prepareSankeyCode = (source: string) => {
     if (/^[\x20-\x7E]+$/.test(label)) return field;
     let token = tokens.get(label);
     if (!token) {
-      token = `SANKEY_LABEL_${tokens.size}`;
+      token = shortLabelToken('S', tokens.size);
       tokens.set(label, token);
       labels.set(token, label);
     }
@@ -86,7 +89,7 @@ const prepareDiagramCode = (source: string) => {
   };
 };
 
-const restorePreparedLabels = (svg: string, labels: Map<string, string>): string => {
+export const restorePreparedLabels = (svg: string, labels: Map<string, string>): string => {
   const escapeMarkup = (value: string) =>
     value.replace(/[&<>"']/g, (character) => {
       switch (character) {
@@ -105,7 +108,9 @@ const restorePreparedLabels = (svg: string, labels: Map<string, string>): string
       }
     });
   let restored = svg;
-  for (const [token, label] of labels) restored = restored.replaceAll(token, escapeMarkup(label));
+  for (const [token, label] of [...labels].sort(([left], [right]) => right.length - left.length)) {
+    restored = restored.replaceAll(token, escapeMarkup(label));
+  }
   return restored;
 };
 

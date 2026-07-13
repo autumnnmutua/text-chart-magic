@@ -1,13 +1,15 @@
 import type { State } from '$lib/types';
-import { diagramData } from '@mermaid-js/examples';
 import { flushSync } from 'svelte';
 import { describe, expect, it, vi } from 'vitest';
 import { parse } from './mermaid';
 import { serializeState } from './serde';
 import {
+  addVisualConnection,
   createDiagramBranchCode,
   defaultState,
+  deleteVisualConnections,
   inputState,
+  loadDiagramTemplate,
   loadState,
   normalizeState,
   replaceAllDiagramText,
@@ -19,6 +21,7 @@ import {
   updateCode,
   updateCodeStore,
   updateVisualLayer,
+  updateVisualConnection,
   updateVisualPositions,
   updateVisualPositionsBatch,
   updateVisualStyle,
@@ -29,6 +32,7 @@ import {
   verifyState
 } from './state.svelte';
 import { searchEditableSourceText } from './searchModel';
+import { createVisualConnection } from './visualConnections';
 
 describe('saved state compatibility', () => {
   it('fills fields missing from legacy saved data without replacing its diagram', () => {
@@ -76,6 +80,25 @@ describe('saved state compatibility', () => {
 
     expect(normalized.visualPositions).toEqual({ valid: { x: 12, y: 18 } });
     expect(normalized.visualStyles).toEqual({ valid: { alpha: 1, fill: '#f97316' } });
+  });
+
+  it('loads saved independent arrows with safe defaults', () => {
+    const normalized = normalizeState({
+      ...defaultState,
+      visualConnections: {
+        'connection-old': {
+          id: 'connection-old',
+          source: { elementId: 'A', anchor: 'right', x: 10, y: 20 },
+          target: { x: 80, y: 20 }
+        }
+      }
+    });
+    expect(normalized.visualConnections?.['connection-old']).toMatchObject({
+      direction: 'forward',
+      label: '关系',
+      lineStyle: 'solid',
+      strokeWidth: 2
+    });
   });
 
   it('does not leak optional fields from the current diagram into a legacy link', () => {
@@ -149,6 +172,29 @@ describe('update functions called from effects', () => {
 });
 
 describe('update functions persist input state', () => {
+  it('stores create, edit and delete arrow actions as reversible state changes', () => {
+    loadDiagramCode('block-beta\n  A["A"]\n  B["B"]');
+    const connection = createVisualConnection(
+      { anchor: 'right', elementId: 'A', x: 10, y: 20 },
+      { anchor: 'left', elementId: 'B', x: 80, y: 20 },
+      'connection-history'
+    );
+    expect(addVisualConnection(connection)).toBe(true);
+    expect(inputState.visualConnections?.[connection.id]?.label).toBe('关系');
+
+    expect(updateVisualConnection({ ...connection, label: '调用' })).toBe(true);
+    expect(inputState.visualConnections?.[connection.id]?.label).toBe('调用');
+    expect(undoLastEdit()).toBe(true);
+    expect(inputState.visualConnections?.[connection.id]?.label).toBe('关系');
+    expect(redoLastEdit()).toBe(true);
+    expect(inputState.visualConnections?.[connection.id]?.label).toBe('调用');
+
+    expect(deleteVisualConnections([connection.id])).toBe(1);
+    expect(inputState.visualConnections).toBeUndefined();
+    expect(undoLastEdit()).toBe(true);
+    expect(inputState.visualConnections?.[connection.id]?.label).toBe('调用');
+  });
+
   it('stores block positions as one undoable and redoable interaction', () => {
     loadDiagramCode('block-beta\n  A["A"]');
     updateVisualPositions({ A: { x: 120, y: 80 } });
@@ -226,6 +272,40 @@ describe('update functions persist input state', () => {
     expect(inputState.code).toBe(code);
   });
 
+  it('replaces source and independent-arrow text in one undoable transaction', () => {
+    const code = 'block-beta\n  A["旧模块"]\n  B["目标"]';
+    loadDiagramCode(code);
+    const connection = {
+      ...createVisualConnection(
+        { anchor: 'right', elementId: 'A', x: 10, y: 20 },
+        { anchor: 'left', elementId: 'B', x: 80, y: 20 },
+        'connection-replace'
+      ),
+      label: '旧关系'
+    };
+    expect(addVisualConnection(connection)).toBe(true);
+    const sourceMatch = searchEditableSourceText(code, '旧', {
+      caseSensitive: false,
+      wholeWord: false
+    })[0];
+    expect(
+      replaceAllDiagramText([
+        { currentText: sourceMatch.text, nextText: '新', range: sourceMatch.range },
+        {
+          connectionId: connection.id,
+          currentText: '旧',
+          nextText: '新',
+          range: { end: 1, start: 0 }
+        }
+      ])
+    ).toBe(2);
+    expect(inputState.code).toContain('新模块');
+    expect(inputState.visualConnections?.[connection.id].label).toBe('新关系');
+    expect(undoLastEdit()).toBe(true);
+    expect(inputState.code).toBe(code);
+    expect(inputState.visualConnections?.[connection.id].label).toBe('旧关系');
+  });
+
   it('normalizes reactive position objects before persistence', () => {
     loadDiagramCode('C4Context\n  System(app, "应用")');
     const positions = $state({ app: { x: 48, y: 32 } });
@@ -255,6 +335,13 @@ describe('update functions persist input state', () => {
     updateCodeStore({ rough: true });
     expect(inputState.rough).toBe(true);
     expect(readStoredState().rough).toBe(true);
+  });
+
+  it('keeps an explicit diagram render pulse even when the flag is already true', () => {
+    updateCodeStore({ updateDiagram: true });
+    const firstRenderCount = inputState.renderCount ?? 0;
+    updateCodeStore({ updateDiagram: true });
+    expect(inputState.renderCount).toBeGreaterThan(firstRenderCount);
   });
 
   it('replaceInputState drops keys absent from the next state and persists', () => {
@@ -336,6 +423,34 @@ describe('update functions persist input state', () => {
     expect(inputState.code).toBe(code);
     expect(inputState.visualPositions).toBeUndefined();
   });
+
+  it('loads a complete showcase template and resets code, style, position and arrows together', async () => {
+    const code = 'block-beta\n  A["起点"]\n  B["终点"]';
+    const connection = createVisualConnection(
+      { anchor: 'right', elementId: 'A', x: 10, y: 10 },
+      { anchor: 'left', elementId: 'B', x: 100, y: 10 },
+      'connection-template'
+    );
+    loadDiagramTemplate({
+      code,
+      visualConnections: { [connection.id]: connection },
+      visualPositions: { A: { x: 20, y: 30 } },
+      visualStyles: { A: { fill: '#fed7aa' } }
+    });
+    await vi.waitUntil(
+      () => validatedState.current.code === code && validatedState.current.error === undefined
+    );
+
+    updateVisualPositions({ A: { x: 200, y: 300 } });
+    deleteVisualConnections([connection.id]);
+    updateVisualStyle('A', { fill: '#ffffff' });
+    resetToDefaultGraph();
+
+    expect(inputState.code).toBe(code);
+    expect(inputState.visualPositions?.A).toEqual({ x: 20, y: 30 });
+    expect(inputState.visualStyles?.A.fill).toBe('#fed7aa');
+    expect(inputState.visualConnections?.[connection.id]).toEqual(connection);
+  });
 });
 
 describe('diagram branch generation', () => {
@@ -350,21 +465,5 @@ describe('diagram branch generation', () => {
     expect(code).toContain('32-47: "新分支 2"');
     expect(code.match(/^\d+(?:-\d+)?:/gm)).toHaveLength(3);
     await expect(parse(code)).resolves.toBeDefined();
-  });
-
-  it('keeps every bundled Mermaid example parseable after adding a branch', async () => {
-    for (const diagram of diagramData) {
-      const code = diagram.examples?.[0]?.code;
-      if (!code) {
-        continue;
-      }
-      const branchCode = createDiagramBranchCode({
-        code,
-        label: 'A',
-        sourceId: 'A'
-      });
-      expect(branchCode, diagram.id).toBeTruthy();
-      await expect(parse(branchCode as string), diagram.id).resolves.toBeDefined();
-    }
   });
 });

@@ -4,8 +4,9 @@ import { applyMigrations } from './migrations.svelte';
 import { initURLSubscription, loadState, updateCodeStore, verifyState } from './state.svelte';
 import { getAnalyticsSafeUrl, initAnalytics, plausible } from './stats';
 
-const loadStateFromURL = (): void => {
+export const loadStateFromCurrentURL = (): void => {
   loadState(window.location.hash.slice(1));
+  syncDiagram();
 };
 
 const syncDiagram = (): void => {
@@ -14,17 +15,23 @@ const syncDiagram = (): void => {
   });
 };
 
-export const initHandler = async (): Promise<void> => {
+let initialization: Promise<void> | undefined;
+
+const initialize = async (): Promise<void> => {
   applyMigrations();
-  loadStateFromURL();
+  loadStateFromCurrentURL();
   await initLoading('正在读取图表…', loadDataFromUrl().catch(console.error));
-  syncDiagram();
   initURLSubscription();
   await initAnalytics();
   plausible?.trackPageview({
     url: getAnalyticsSafeUrl()
   });
   verifyState();
+};
+
+export const initHandler = (): Promise<void> => {
+  initialization ??= initialize();
+  return initialization;
 };
 
 export const fetchJSON = async <T>(url: string): Promise<T> => {

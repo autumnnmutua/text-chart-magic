@@ -53,7 +53,8 @@ const getFreeLayoutSelection = (
 
 const clientDeltaToSvg = (item: VisualDocumentItem, dx: number, dy: number): VisualPosition => {
   const svg = (item.element as SVGGraphicsElement).ownerSVGElement;
-  const matrix = svg?.getScreenCTM();
+  const coordinateSpace = svg?.querySelector<SVGGraphicsElement>('.svg-pan-zoom_viewport') ?? svg;
+  const matrix = coordinateSpace?.getScreenCTM();
   if (!matrix) return { x: dx, y: dy };
   const inverse = matrix.inverse();
   const start = new DOMPoint(0, 0).matrixTransform(inverse);
@@ -157,13 +158,18 @@ export const deleteSelectedElements = (): number => {
     notify('当前选择没有可删除的未锁定元素。');
     return 0;
   }
+  const connectionIds = items
+    .filter((item) => Boolean(validatedState.current.visualConnections?.[item.id]))
+    .map(({ id }) => id);
+  const diagramItems = items.filter((item) => !connectionIds.includes(item.id));
   const deleted = deleteDiagramElements(
-    items.map((item) => ({
+    diagramItems.map((item) => ({
       occurrence: item.occurrence,
       sourceId: item.sourceId,
       styleId: item.styleId ?? item.id,
       text: item.kind === 'edge' && item.label === '连线' ? '箭头' : item.label
-    }))
+    })),
+    connectionIds
   );
   if (deleted > 0) clearVisualSelection();
   return deleted;

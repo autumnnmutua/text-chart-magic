@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { createDiagramBranch } from './diagramBranch';
 import { localizedDiagramSamples } from './diagramSamples';
+import { investorSamples } from './investorSamples';
 import { getSampleDiagrams, parse } from './mermaid';
+import { normalizeState } from './state.svelte';
 import { findVisualTextRange } from './visualTextEdit';
 
 const branchTargets: Record<string, { label: string; sourceId?: string }> = {
@@ -32,6 +34,15 @@ const branchTargets: Record<string, { label: string; sourceId?: string }> = {
   'Wardley Maps': { label: '在线下单' },
   XY: { label: '一月' },
   ZenUML: { label: 'Customer', sourceId: 'Customer' }
+};
+
+const investorTargets: Record<string, { label: string; sourceId?: string }> = {
+  'C4 系统关系图': { label: '业务 API', sourceId: 'api' },
+  'SaaS 产品系统架构': { label: '核心业务服务', sourceId: 'core' },
+  创业产品路线图: { label: '核心功能开发' },
+  市场机会矩阵: { label: '自然语言生成图表' },
+  用户增长旅程: { label: '创建第一张图表' },
+  自由块图与箭头展示: { label: '产品方案', sourceId: 'product' }
 };
 
 describe('localizedDiagramSamples', () => {
@@ -77,4 +88,51 @@ describe('localizedDiagramSamples', () => {
       ).toBeDefined();
     }
   });
+});
+
+describe('investorSamples', () => {
+  it('provides six distinct editable showcase documents', async () => {
+    expect(investorSamples).toHaveLength(6);
+    expect(new Set(investorSamples.map(({ title }) => title)).size).toBe(investorSamples.length);
+    for (const sample of investorSamples) {
+      expect(sample.title).toBeTruthy();
+      expect(sample.state.code.trim()).toBeTruthy();
+      await expect(parse(sample.state.code), sample.title).resolves.toBeDefined();
+    }
+  }, 30_000);
+
+  it('keeps the free-arrow showcase in the same persisted state model as user work', () => {
+    const sample = investorSamples.find(({ diagramType }) => diagramType === 'Block');
+    expect(sample).toBeDefined();
+    const normalized = normalizeState({
+      ...sample?.state,
+      mermaid: '{}',
+      rough: false,
+      updateDiagram: true
+    });
+    expect(Object.keys(normalized.visualConnections ?? {})).toHaveLength(6);
+    expect(normalized.visualConnections?.['connection-showcase-3'].direction).toBe('both');
+    expect(
+      normalized.visualConnections?.['connection-showcase-free'].source.elementId
+    ).toBeUndefined();
+  });
+
+  it('keeps every showcase source-editable and safely expandable', async () => {
+    expect(Object.keys(investorTargets).sort()).toEqual(
+      investorSamples.map(({ title }) => title).sort()
+    );
+    for (const sample of investorSamples) {
+      const target = investorTargets[sample.title];
+      expect(
+        findVisualTextRange(sample.state.code, {
+          sourceId: target.sourceId,
+          text: target.label
+        }),
+        `${sample.title} text`
+      ).toBeDefined();
+      const expanded = createDiagramBranch({ code: sample.state.code, ...target });
+      expect(expanded?.code, `${sample.title} branch`).toBeTruthy();
+      await expect(parse(expanded?.code ?? ''), `${sample.title} expanded`).resolves.toBeDefined();
+    }
+  }, 30_000);
 });

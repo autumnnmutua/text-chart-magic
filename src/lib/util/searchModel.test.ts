@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { searchEditableSourceText } from './searchModel';
+import { searchEditableSourceText, searchVisualConnectionText } from './searchModel';
+import { createVisualConnection } from './visualConnections';
 
 const options = { caseSensitive: false, wholeWord: false };
 
@@ -81,6 +82,29 @@ xychart-beta
   it('returns no results for empty or overlong unmatched input', () => {
     expect(searchEditableSourceText('flowchart LR\n A[测试]', '', options)).toEqual([]);
     expect(searchEditableSourceText('flowchart LR\n A[测试]', 'x'.repeat(800), options)).toEqual(
+      []
+    );
+  });
+
+  it('searches editable independent-arrow labels without exposing endpoint data', () => {
+    const connection = {
+      ...createVisualConnection(
+        { anchor: 'right', elementId: 'A', x: 10, y: 20 },
+        { anchor: 'left', elementId: 'B', x: 80, y: 20 },
+        'connection-search'
+      ),
+      label: 'API 异步调用'
+    };
+    const results = searchVisualConnectionText({ [connection.id]: connection }, '异步', options);
+    expect(results).toMatchObject([
+      {
+        connectionId: 'connection-search',
+        containerText: 'API 异步调用',
+        kind: '箭头文字',
+        text: '异步'
+      }
+    ]);
+    expect(searchVisualConnectionText({ [connection.id]: connection }, 'right', options)).toEqual(
       []
     );
   });

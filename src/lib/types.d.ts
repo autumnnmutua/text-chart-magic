@@ -34,6 +34,7 @@ export interface State {
   visualStyles?: Record<string, VisualStyle>;
   visualPositions?: Record<string, VisualPosition>;
   visualLayers?: Record<string, VisualLayerState>;
+  visualConnections?: Record<string, VisualConnection>;
   snapToGrid?: boolean;
 }
 
@@ -53,6 +54,34 @@ export interface VisualLayerState {
   hidden?: boolean;
   locked?: boolean;
   zIndex?: number;
+}
+
+export type VisualAnchorId =
+  | 'bottom'
+  | 'bottom-left'
+  | 'bottom-right'
+  | 'left'
+  | 'right'
+  | 'top'
+  | 'top-left'
+  | 'top-right';
+
+export interface VisualConnectionEndpoint extends VisualPosition {
+  anchor?: VisualAnchorId;
+  elementId?: string;
+}
+
+export type VisualConnectionDirection = 'both' | 'forward' | 'none';
+export type VisualConnectionLineStyle = 'dashed' | 'solid';
+
+export interface VisualConnection {
+  direction: VisualConnectionDirection;
+  id: string;
+  label: string;
+  lineStyle: VisualConnectionLineStyle;
+  source: VisualConnectionEndpoint;
+  strokeWidth: number;
+  target: VisualConnectionEndpoint;
 }
 
 export interface ValidatedState extends State {

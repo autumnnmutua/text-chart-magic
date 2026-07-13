@@ -94,9 +94,10 @@ const insertNearLabelLine = (
   label: string,
   line: string,
   { asChild = false }: { asChild?: boolean } = {}
-): string => {
+): string | undefined => {
   const lines = code.trimEnd().split('\n');
   const index = findLineIndexByLabel(lines, label);
+  if (normalizeLabel(label) && index < 0) return undefined;
   const referenceLine = index >= 0 ? lines[index] : (lines.at(-1) ?? '');
   const indent = referenceLine.match(/^\s*/)?.[0] ?? getCodeIndent(code);
   lines.splice(
@@ -136,6 +137,7 @@ const addFlowchartBranch: BranchStrategy = ({ code, label, sourceId }) => {
   )?.[0];
   if (!cleanSourceId) return undefined;
   const ids = collectFlowchartNodeIDs(code);
+  if (!ids.includes(cleanSourceId)) return undefined;
   let index = 1;
   let branchId = `${cleanSourceId}_branch_${index}`;
   while (ids.includes(branchId)) branchId = `${cleanSourceId}_branch_${++index}`;
@@ -161,20 +163,33 @@ const addFlowchartBranch: BranchStrategy = ({ code, label, sourceId }) => {
 const addMindmapBranch: BranchStrategy = ({ code, label }) => {
   const lines = code.trimEnd().split('\n');
   const index = findLineIndexByLabel(lines, label);
+  if (normalizeLabel(label) && index < 0) return undefined;
   const parent = index >= 0 ? lines[index] : (lines.at(-1) ?? '');
   const indent = `${parent.match(/^\s*/)?.[0] ?? '  '}  `;
   lines.splice(index >= 0 ? index + 1 : lines.length, 0, `${indent}${getUniqueLabel(code)}`);
   return `${lines.join('\n')}\n`;
 };
 
-const addSequenceBranch: BranchStrategy = ({ code, label }) => {
+const addSequenceBranch: BranchStrategy = ({ code, label, sourceId }) => {
   const branchId = getUniqueName(code, 'Branch');
   const wanted = normalizeLabel(label);
-  const participant = [
+  const participants = [
     ...code.matchAll(/^\s*(?:participant|actor)\s+([A-Za-z][\w-]*)(?:\s+as\s+(.+))?/gim)
-  ].find((match) => match[1] === wanted || normalizeLabel(match[2]) === wanted);
+  ];
+  const implicitParticipants = [
+    ...code.matchAll(
+      /^\s*([A-Za-z][\w-]*)\s*(?:-->>?|->>|-->|->|-\)|--\)|-x|--x)\s*([A-Za-z][\w-]*)/gim
+    )
+  ].flatMap((match) => [match[1], match[2]]);
+  const participant = participants.find(
+    (match) => match[1] === wanted || normalizeLabel(match[2]) === wanted
+  );
   const source =
-    participant?.[1] ?? code.match(/^\s*([A-Za-z][\w-]*)\s*(?:-->>?|->>|-->|->|-\))/m)?.[1] ?? 'A';
+    participant?.[1] ??
+    participants.find((match) => match[1] === sourceId)?.[1] ??
+    implicitParticipants.find((name) => name === sourceId || normalizeLabel(name) === wanted) ??
+    (!normalizeLabel(label) ? implicitParticipants[0] : undefined);
+  if (!source) return undefined;
   return `${code.trimEnd()}\n    participant ${branchId} as ${getUniqueLabel(code)}\n    ${source}->>${branchId}: ${getUniqueLabel(code)}\n`;
 };
 
@@ -185,9 +200,9 @@ const addClassBranch: BranchStrategy = ({ code, label, sourceId }) => {
   const source =
     classes.find((match) => match[1] === wanted || normalizeLabel(match[2]) === wanted)?.[1] ||
     (sourceId && classes.some((match) => match[1] === sourceId) ? sourceId : '') ||
-    code.match(/^\s*class\s+([A-Za-z][\w-]*)/im)?.[1] ||
-    'Root';
-  const memberOwner = sourceId || source;
+    (!wanted ? code.match(/^\s*class\s+([A-Za-z][\w-]*)/im)?.[1] : '');
+  if (!source) return undefined;
+  const memberOwner = source;
   const selectedIsMember =
     wanted && !classes.some((match) => match[1] === wanted || normalizeLabel(match[2]) === wanted);
   if (selectedIsMember && memberOwner) {
@@ -208,15 +223,23 @@ const addClassBranch: BranchStrategy = ({ code, label, sourceId }) => {
   return `${code.trimEnd()}\n    class ${branchId}["${getUniqueLabel(code)}"] {\n      +String 新字段\n      +新方法()\n    }\n    ${source} <|-- ${branchId}\n`;
 };
 
-const addStateBranch: BranchStrategy = ({ code, label }) => {
+const addStateBranch: BranchStrategy = ({ code, label, sourceId }) => {
   const branchId = getUniqueName(code, 'Branch');
   const wanted = normalizeLabel(label);
+  const explicitSource = [...code.matchAll(/^\s*([A-Za-z][\w-]*)\s*:\s*(.+)$/gm)].find(
+    (match) => match[1] === wanted || normalizeLabel(match[2]) === wanted
+  )?.[1];
+  const stateIds = new Set(
+    [...code.matchAll(/(?:^|\s)([A-Za-z][\w-]*)\s*(?=-->|:)|-->\s*([A-Za-z][\w-]*)/gm)].flatMap(
+      (match) => [match[1], match[2]].filter(Boolean)
+    )
+  );
   const source =
-    [...code.matchAll(/^\s*([A-Za-z][\w-]*)\s*:\s*(.+)$/gm)].find(
-      (match) => match[1] === wanted || normalizeLabel(match[2]) === wanted
-    )?.[1] ??
-    code.match(/^\s*([A-Za-z][\w-]*)\s*-->/m)?.[1] ??
-    '[*]';
+    explicitSource ||
+    (sourceId && stateIds.has(sourceId) ? sourceId : '') ||
+    ([...stateIds].find((id) => normalizeLabel(id) === wanted) ?? '') ||
+    (!wanted ? '[*]' : '');
+  if (!source) return undefined;
   return `${code.trimEnd()}\n    ${branchId}: ${getUniqueLabel(code)}\n    ${source} --> ${branchId}\n`;
 };
 
@@ -224,6 +247,7 @@ const addGanttBranch: BranchStrategy = ({ code, label, mode }) => {
   const taskId = getUniqueName(code, 'task');
   const lines = code.trimEnd().split('\n');
   const wanted = normalizeLabel(label);
+  if (wanted && findLineIndexByLabel(lines, label) < 0) return undefined;
   const sectionIndex = lines.findIndex(
     (line) => normalizeLabel(line.replace(/^\s*section\s+/i, '')) === wanted
   );
@@ -301,7 +325,9 @@ const getIndentLength = (line: string): number => line.match(/^\s*/)?.[0].length
 const addTreemapBranch: BranchStrategy = ({ code, label }) => {
   const lines = code.trimEnd().split('\n');
   const index = findLineIndexByLabel(lines, label);
-  if (index < 0) return `${code.trimEnd()}\n"${getUniqueLabel(code)}": 1\n`;
+  if (index < 0) {
+    return normalizeLabel(label) ? undefined : `${code.trimEnd()}\n"${getUniqueLabel(code)}": 1\n`;
+  }
   const parentIndent = getIndentLength(lines[index]);
   const leafValue = lines[index].match(/:\s*(-?\d+(?:\.\d+)?)\s*$/)?.[1];
   if (leafValue) {
@@ -362,6 +388,7 @@ const addPacketBranch: BranchStrategy = ({ code, label, mode }) => {
   const selectedIndex = fields.findIndex(
     (field) => normalizeLabel(field.label) === normalizeLabel(label)
   );
+  if (normalizeLabel(label) && selectedIndex < 0) return undefined;
   const insertIndex =
     selectedIndex < 0 ? fields.length : selectedIndex + (mode === 'before' ? 0 : 1);
   const selected = fields[selectedIndex];
@@ -427,7 +454,11 @@ const addXYDimension: BranchStrategy = ({ code }) => {
 const addTimelineBranch: BranchStrategy = ({ code, label }) => {
   const lines = code.trimEnd().split('\n');
   const index = findLineIndexByLabel(lines, label);
-  if (index < 0) return `${code.trimEnd()}\n    ${getUniqueLabel(code)} : 新事件\n`;
+  if (index < 0) {
+    return normalizeLabel(label)
+      ? undefined
+      : `${code.trimEnd()}\n    ${getUniqueLabel(code)} : 新事件\n`;
+  }
   const periodMatch = lines[index].match(/^\s*([^:]+?)\s*:\s*(.*)$/);
   if (periodMatch && normalizeLabel(periodMatch[1]) === normalizeLabel(label)) {
     let insertIndex = index + 1;
@@ -494,6 +525,7 @@ const findC4BoundaryEnd = (lines: string[], boundary: C4Element): number => {
 const addC4Branch: BranchStrategy = ({ code, label, sourceId }) => {
   const id = getUniqueName(code, 'Branch');
   const source = findC4Element(code, label, sourceId);
+  if ((normalizeLabel(label) || sourceId) && !source) return undefined;
   const keyword = getDiagramKeyword(code);
   const kind =
     keyword === 'c4component' ? 'Component' : keyword === 'c4container' ? 'Container' : 'System';
@@ -554,34 +586,43 @@ const addRequirementBranch: BranchStrategy = ({ code, label, sourceId }) => {
   const parent = sourceParent
     ? { id: sourceParent[2], kind: sourceParent[1] }
     : findRequirementByLabel(code, label);
+  if ((normalizeLabel(label) || sourceId) && !parent) return undefined;
   const kind = parent?.kind ?? 'requirement';
   const relation = parent ? `\n    ${parent.id} - contains -> ${id}` : '';
   return `${code.trimEnd()}\n\n    ${kind} ${id} {\n      id: ${id}\n      text: "${getUniqueLabel(code)}"\n      risk: low\n      verifymethod: test\n    }${relation}\n`;
 };
 
-const findArchitectureService = (code: string, label: string) => {
+const findArchitectureService = (code: string, label: string, sourceId = '') => {
   const wanted = normalizeLabel(label);
   for (const match of code.matchAll(
     /^\s*service\s+([\w-]+)\(([^)]+)\)\["?([^\]"\n]+)"?\](?:\s+in\s+([\w-]+))?/gim
   )) {
-    if ([match[1], match[3]].some((value) => normalizeLabel(value) === wanted)) {
+    if (
+      match[1] === sourceId ||
+      [match[1], match[3]].some((value) => normalizeLabel(value) === wanted)
+    ) {
       return { group: match[4] ?? '', id: match[1] };
     }
   }
   return undefined;
 };
 
-const findArchitectureGroup = (code: string, label: string): string => {
+const findArchitectureGroup = (code: string, label: string, sourceId = ''): string => {
   const wanted = normalizeLabel(label);
   for (const match of code.matchAll(/^\s*group\s+([\w-]+)\([^)]+\)\["?([^\]"\n]+)"?\]/gim)) {
-    if ([match[1], match[2]].some((value) => normalizeLabel(value) === wanted)) return match[1];
+    if (
+      match[1] === sourceId ||
+      [match[1], match[2]].some((value) => normalizeLabel(value) === wanted)
+    )
+      return match[1];
   }
   return '';
 };
 
-const addArchitectureBranch: BranchStrategy = ({ code, label }) => {
-  const source = findArchitectureService(code, label);
-  const selectedGroup = findArchitectureGroup(code, label);
+const addArchitectureBranch: BranchStrategy = ({ code, label, sourceId }) => {
+  const source = findArchitectureService(code, label, sourceId);
+  const selectedGroup = findArchitectureGroup(code, label, sourceId);
+  if ((normalizeLabel(label) || sourceId) && !source && !selectedGroup) return undefined;
   const id = getUniqueName(code, 'service').toLowerCase();
   const parentGroup = source?.group || selectedGroup;
   const group = parentGroup ? ` in ${parentGroup}` : '';
@@ -602,7 +643,7 @@ const addArchitectureBranch: BranchStrategy = ({ code, label }) => {
   return `${code.trimEnd()}\n    service ${id}(server)[${getUniqueLabel(code)}]${group}${edge}\n`;
 };
 
-const findEREntity = (code: string, label: string): string => {
+const findEREntity = (code: string, label: string, sourceId = ''): string => {
   const wanted = normalizeLabel(label);
   const entities = new Set<string>();
   for (const match of code.matchAll(/^\s*([A-Za-z][\w-]*)\s*\{/gm)) entities.add(match[1]);
@@ -613,12 +654,13 @@ const findEREntity = (code: string, label: string): string => {
     entities.add(match[2]);
   }
   return (
-    [...entities].find((entity) => normalizeLabel(entity) === wanted) ?? [...entities][0] ?? ''
+    [...entities].find((entity) => entity === sourceId || normalizeLabel(entity) === wanted) ?? ''
   );
 };
 
-const addERBranch: BranchStrategy = ({ code, label }) => {
-  const parent = findEREntity(code, label);
+const addERBranch: BranchStrategy = ({ code, label, sourceId }) => {
+  const parent = findEREntity(code, label, sourceId);
+  if ((normalizeLabel(label) || sourceId) && !parent) return undefined;
   const id = getUniqueName(code, 'ENTITY').toUpperCase();
   const relation = parent ? `    ${parent} ||--o{ ${id} : "包含"\n` : '';
   return `${code.trimEnd()}\n${relation}    ${id} {\n        string id PK "主键"\n        string name "${getUniqueLabel(code)}"\n    }\n`;
@@ -632,22 +674,27 @@ const findWardleyComponent = (code: string, label: string): string => {
   return '';
 };
 
-const addWardleyBranch: BranchStrategy = ({ code, label }) => {
+const addWardleyBranch: BranchStrategy = ({ code, label, sourceId }) => {
   const name = getUniqueName(code, 'Component');
-  const parent = findWardleyComponent(code, label);
+  const parent =
+    (sourceId ? findWardleyComponent(code, sourceId) : '') || findWardleyComponent(code, label);
+  if ((normalizeLabel(label) || sourceId) && !parent) return undefined;
   const dependency = parent ? `${parent} -> ${name}\n` : '';
   return `${code.trimEnd()}\ncomponent ${name} [0.50, 0.50] label [-20, 4]\n${dependency}`;
 };
 
-const addZenUMLBranch: BranchStrategy = ({ code, label }) => {
+const addZenUMLBranch: BranchStrategy = ({ code, label, sourceId }) => {
   const participant = getUniqueName(code, 'Participant');
   const step = getUniqueName(code, 'newStep');
   const wanted = normalizeLabel(label);
   const participants = [
     ...code.matchAll(/^\s*@[A-Za-z][\w<>]*\s+(?:<<[^>]+>>\s+)?([A-Za-z][\w-]*)/gm)
   ].map((match) => match[1]);
-  const caller = participants.find((item) => normalizeLabel(item) === wanted) ?? participants[0];
+  const caller =
+    participants.find((item) => item === sourceId || normalizeLabel(item) === wanted) ??
+    (!wanted && !sourceId ? participants[0] : undefined);
   if (caller) return `${code.trimEnd()}\n    ${caller}.${step}()\n`;
+  if (wanted || sourceId) return undefined;
   return `${code.trimEnd()}\n    @Participant ${participant}\n    ${participant}.${step}()\n`;
 };
 
@@ -669,7 +716,7 @@ const addVennBranch: BranchStrategy = ({ code, label }) => {
   return `${code.trimEnd()}\n    set ${id}["${getUniqueLabel(code)}"]${union}\n`;
 };
 
-const getGitBranchForLabel = (code: string, label: string): string => {
+const getGitBranchForLabel = (code: string, label: string): string | undefined => {
   const wanted = normalizeLabel(label).replace(/^"|"$/g, '');
   if (wanted === 'main') return 'main';
   const declared = [
@@ -687,11 +734,12 @@ const getGitBranchForLabel = (code: string, label: string): string => {
     const commit = line.match(/^\s*commit(?:\s+id:\s*(?:"([^"]+)"|([^\s]+)))?/i);
     if (commit && normalizeLabel(commit[1] ?? commit[2] ?? '') === wanted) return current;
   }
-  return 'main';
+  return undefined;
 };
 
 const addGitBranch: BranchStrategy = ({ code, label, mode }) => {
-  const sourceBranch = getGitBranchForLabel(code, label);
+  const sourceBranch = normalizeLabel(label) ? getGitBranchForLabel(code, label) : 'main';
+  if (!sourceBranch) return undefined;
   const checkout = sourceBranch ? `\n    checkout ${sourceBranch}` : '';
   const commitId = getUniqueLabel(code).replace(/\s+/g, '-');
   if (mode === 'commit') {
@@ -715,8 +763,9 @@ const findBlockId = (code: string, label: string): string => {
   return '';
 };
 
-const addBlockBranch: BranchStrategy = ({ code, label }) => {
-  const source = findBlockId(code, label);
+const addBlockBranch: BranchStrategy = ({ code, label, sourceId }) => {
+  const source = findBlockId(code, sourceId || label);
+  if ((normalizeLabel(label) || sourceId) && !source) return undefined;
   const id = getUniqueName(code, 'Branch');
   const edge = source ? `\n  ${source} --> ${id}` : '';
   return `${code.trimEnd()}\n  ${id}["${getUniqueLabel(code)}"]${edge}\n`;
@@ -780,9 +829,12 @@ const strategies: Record<string, BranchStrategy> = {
   'treeview-beta': ({ code, label }) =>
     insertNearLabelLine(code, label, `"${getUniqueLabel(code)}"`, { asChild: true }),
   'xychart-beta': addXYDimension,
-  'sankey-beta': ({ code }) => {
-    const label = getUniqueLabel(code);
-    return `${code.trimEnd()}\n"${label}","${label}目标",1\n`;
+  'sankey-beta': ({ code, label }) => {
+    const source = normalizeLabel(label);
+    if (!source) return undefined;
+    const branchLabel = getUniqueLabel(code);
+    const escapeCsv = (value: string) => value.replaceAll('"', '""');
+    return `${code.trimEnd()}\n"${escapeCsv(source)}","${escapeCsv(branchLabel)}",1\n`;
   },
   'venn-beta': addVennBranch,
   'wardley-beta': addWardleyBranch,
@@ -802,9 +854,8 @@ export const createDiagramBranch = ({
 }: DiagramBranchRequest): DiagramBranchResult | undefined => {
   const keyword = getDiagramKeyword(code);
   const strategy = keyword.startsWith('c4') ? addC4Branch : strategies[keyword];
-  const nextCode =
-    strategy?.({ code, label, mode, sourceId }) ??
-    `${code.trimEnd()}\n%% ${getUniqueLabel(code)}：当前图表类型暂不支持自动连线，请在这里继续编辑\n`;
+  const nextCode = strategy?.({ code, label, mode, sourceId });
+  if (!nextCode || nextCode === code) return undefined;
   const result: DiagramBranchResult = {
     code: nextCode,
     optimizeFlowchart: ['flowchart', 'flowchart-elk', 'flowchart-v2', 'graph'].includes(keyword)

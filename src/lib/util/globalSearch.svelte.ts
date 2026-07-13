@@ -1,5 +1,9 @@
 import { notify } from './notify';
-import { searchEditableSourceText, type DiagramSearchResult } from './searchModel';
+import {
+  searchEditableSourceText,
+  searchVisualConnectionText,
+  type DiagramSearchResult
+} from './searchModel';
 import { replaceAllDiagramText, validatedState } from './state.svelte';
 import { requestVisualFocus } from './visualDocument.svelte';
 
@@ -15,7 +19,11 @@ let sourceFingerprint = '';
 const focusCurrent = (): void => {
   const result = results[currentIndex];
   if (!result) return;
-  requestVisualFocus({ occurrence: result.occurrence, text: result.containerText });
+  requestVisualFocus(
+    result.connectionId
+      ? { visualId: result.connectionId }
+      : { occurrence: result.occurrence, text: result.containerText }
+  );
 };
 
 export const globalSearch = {
@@ -45,11 +53,17 @@ export const globalSearch = {
   }
 };
 
-export const refreshGlobalSearch = (code = validatedState.current.code): void => {
-  const fingerprint = `${code}\u0000${query}\u0000${caseSensitive}\u0000${wholeWord}`;
+export const refreshGlobalSearch = (
+  code = validatedState.current.code,
+  connections = validatedState.current.visualConnections
+): void => {
+  const fingerprint = `${code}\u0000${JSON.stringify(connections ?? {})}\u0000${query}\u0000${caseSensitive}\u0000${wholeWord}`;
   if (fingerprint === sourceFingerprint) return;
   sourceFingerprint = fingerprint;
-  results = searchEditableSourceText(code, query, { caseSensitive, wholeWord });
+  results = [
+    ...searchEditableSourceText(code, query, { caseSensitive, wholeWord }),
+    ...searchVisualConnectionText(connections, query, { caseSensitive, wholeWord })
+  ];
   currentIndex = Math.min(currentIndex, Math.max(results.length - 1, 0));
   focusCurrent();
 };
@@ -92,7 +106,12 @@ export const setGlobalSearchWholeWord = (value: boolean): void => {
 
 export const moveGlobalSearchResult = (direction: -1 | 1): void => {
   if (results.length === 0) return;
-  currentIndex = (currentIndex + direction + results.length) % results.length;
+  selectGlobalSearchResult((currentIndex + direction + results.length) % results.length);
+};
+
+export const selectGlobalSearchResult = (index: number): void => {
+  if (results.length === 0 || !Number.isFinite(index)) return;
+  currentIndex = Math.min(Math.max(Math.trunc(index), 0), results.length - 1);
   focusCurrent();
 };
 
@@ -100,7 +119,12 @@ export const replaceCurrentSearchResult = (): boolean => {
   const result = results[currentIndex];
   if (!result) return false;
   const replaced = replaceAllDiagramText([
-    { currentText: result.text, nextText: replacement, range: result.range }
+    {
+      connectionId: result.connectionId,
+      currentText: result.text,
+      nextText: replacement,
+      range: result.range
+    }
   ]);
   if (replaced > 0) {
     notify('已替换当前匹配项。');
@@ -112,6 +136,7 @@ export const replaceCurrentSearchResult = (): boolean => {
 export const replaceAllSearchResults = (): number => {
   const replaced = replaceAllDiagramText(
     results.map((result) => ({
+      connectionId: result.connectionId,
       currentText: result.text,
       nextText: replacement,
       range: result.range

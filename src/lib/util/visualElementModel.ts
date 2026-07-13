@@ -7,6 +7,7 @@ import type { VisualDocumentItem } from './visualDocument.svelte';
 import { collectEditableSourceText, normalizeVisibleText } from './visualTextEdit';
 
 const semanticSelector = [
+  'g[data-visual-connection]',
   'g[data-c4-id]',
   'g[data-architecture-id]',
   'g.node[data-style-id]',
@@ -43,6 +44,7 @@ const sourceIdFromNode = (node: Element): string => {
   const nodeId = node.id ?? '';
   const styleId = node.getAttribute('data-style-id') ?? '';
   return (
+    (node.getAttribute('data-visual-connection') ? node.getAttribute('data-visual-id') : '') ||
     getC4NodeId(node) ||
     getArchitectureNodeId(node) ||
     parseRenderedSourceId(nodeId) ||
@@ -187,6 +189,7 @@ const labelFromElement = (element: Element): string => {
 
 const kindFromElement = (element: Element): VisualDocumentItem['kind'] => {
   if (
+    element.matches('[data-visual-connection]') ||
     element.matches(
       '.edgePath, .edgeLabel, path[data-edge="true"], line, path[marker-end], path[class*="messageLine"]'
     )
@@ -271,7 +274,10 @@ export const buildVisualDocument = (graph: SVGSVGElement, code: string): VisualD
     const parent = element.parentElement?.closest<Element>('[data-visual-id]');
     const canDeleteEdge =
       kind === 'edge' &&
-      Boolean(visibleLabel || element.matches('.edgePath, path[data-edge="true"]'));
+      Boolean(
+        visibleLabel ||
+        element.matches('[data-visual-connection], .edgePath, path[data-edge="true"]')
+      );
     result.push({
       canAlign: Boolean(layoutKind),
       canDelete: kind === 'edge' ? canDeleteEdge : Boolean(label),

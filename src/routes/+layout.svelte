@@ -2,7 +2,7 @@
   import { Toaster } from '$/components/ui/sonner/index.js';
   import { loadingState } from '$/util/loading.svelte';
   import { toggleDarkTheme } from '$/util/state.svelte';
-  import { initHandler } from '$/util/util';
+  import { loadStateFromCurrentURL } from '$/util/util';
   import { base } from '$app/paths';
   import { mode, ModeWatcher } from 'mode-watcher';
   import { onMount, type Snippet } from 'svelte';
@@ -18,7 +18,7 @@
   // Then move it into src and vite will bundle it automatically.
   onMount(() => {
     const handleHashChange = () => {
-      void initHandler();
+      loadStateFromCurrentURL();
     };
     window.addEventListener('hashchange', handleHashChange);
 

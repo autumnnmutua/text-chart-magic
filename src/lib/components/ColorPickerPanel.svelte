@@ -8,6 +8,8 @@
     defaultVisualStyle,
     visualSelection
   } from '$lib/util/visualSelection.svelte';
+  import { visualDocument } from '$lib/util/visualDocument.svelte';
+  import { applyVisualStyleToElement } from '$lib/util/visualStyle';
   import { onMount } from 'svelte';
   import PaletteIcon from '~icons/material-symbols/palette-outline';
 
@@ -51,6 +53,7 @@
   let recentColors = $state<string[]>([]);
   let panelElement: HTMLButtonElement | undefined = $state();
   let hueElement: HTMLButtonElement | undefined = $state();
+  let activeColorPointerId: number | undefined;
 
   const clamp = (number: number, min: number, max: number): number =>
     Math.min(Math.max(number, min), max);
@@ -213,6 +216,21 @@
     });
   };
 
+  const previewStyle = () => {
+    const style = {
+      alpha,
+      fill: currentHex,
+      stroke: currentHex,
+      text: currentHsl.lightness < 52 ? '#ffffff' : '#111827'
+    };
+    const selectedIds = new Set(visualSelection.ids);
+    for (const item of visualDocument.current) {
+      if (selectedIds.has(item.id) && !validatedState.current.visualLayers?.[item.id]?.locked) {
+        applyVisualStyleToElement(item.element, style);
+      }
+    }
+  };
+
   const setFromRgb = (rgb: RGB, { save = true }: { save?: boolean } = {}) => {
     const next = rgbToHsv({
       blue: clamp(rgb.blue, 0, 255),
@@ -272,7 +290,7 @@
     saturation = clamp(((event.clientX - rect.left) / rect.width) * 100, 0, 100);
     value = clamp(100 - ((event.clientY - rect.top) / rect.height) * 100, 0, 100);
     syncInputs();
-    writeStyle();
+    previewStyle();
   };
 
   const updateHueFromPointer = (event: PointerEvent) => {
@@ -282,21 +300,29 @@
     const rect = hueElement.getBoundingClientRect();
     hue = clamp(((event.clientX - rect.left) / rect.width) * 359, 0, 359);
     syncInputs();
-    writeStyle();
+    previewStyle();
   };
 
-  const updateAlpha = (event: Event) => {
+  const updateAlphaPreview = (event: Event) => {
     alpha = Number((event.currentTarget as HTMLInputElement).value);
     syncInputs();
+    previewStyle();
+  };
+
+  const finishPointerPick = (event: PointerEvent): void => {
+    if (activeColorPointerId === undefined || event.pointerId !== activeColorPointerId) return;
+    activeColorPointerId = undefined;
     writeStyle();
   };
 
   const startPointerPick = (event: PointerEvent) => {
+    activeColorPointerId = event.pointerId;
     (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
     updateFromPointer(event);
   };
 
   const startHuePick = (event: PointerEvent) => {
+    activeColorPointerId = event.pointerId;
     (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
     updateHueFromPointer(event);
   };
@@ -322,6 +348,12 @@
     } catch {
       recentColors = [];
     }
+    window.addEventListener('pointerup', finishPointerPick);
+    window.addEventListener('pointercancel', finishPointerPick);
+    return () => {
+      window.removeEventListener('pointerup', finishPointerPick);
+      window.removeEventListener('pointercancel', finishPointerPick);
+    };
   });
 
   $effect(() => {
@@ -400,7 +432,8 @@
         max="1"
         step="0.01"
         bind:value={alpha}
-        oninput={updateAlpha} />
+        oninput={updateAlphaPreview}
+        onchange={writeStyle} />
     </label>
 
     <div class="grid gap-2">

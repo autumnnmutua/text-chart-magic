@@ -3,6 +3,7 @@ import {
   normalizeVisibleText,
   type SourceTextRange
 } from './visualTextEdit';
+import type { State } from '$lib/types';
 
 export interface SearchOptions {
   caseSensitive: boolean;
@@ -10,15 +11,30 @@ export interface SearchOptions {
 }
 
 export interface DiagramSearchResult {
+  connectionId?: string;
   containerText: string;
   id: string;
-  kind: ReturnType<typeof collectEditableSourceText>[number]['kind'];
+  kind: ReturnType<typeof collectEditableSourceText>[number]['kind'] | '箭头文字';
   occurrence: number;
   range: SourceTextRange;
   text: string;
 }
 
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const createSearchPattern = (query: string, options: SearchOptions): RegExp | undefined => {
+  const needle = query.slice(0, 500);
+  if (!needle) return undefined;
+  const flags = options.caseSensitive ? 'gu' : 'giu';
+  const boundary = options.wholeWord
+    ? `(?<![\\p{L}\\p{N}_])${escapeRegExp(needle)}(?![\\p{L}\\p{N}_])`
+    : escapeRegExp(needle);
+  try {
+    return new RegExp(boundary, flags);
+  } catch {
+    return undefined;
+  }
+};
 
 const isStructuralIdentifier = (
   code: string,
@@ -58,18 +74,8 @@ export const searchEditableSourceText = (
   query: string,
   options: SearchOptions
 ): DiagramSearchResult[] => {
-  const needle = query.slice(0, 500);
-  if (!needle) return [];
-  const flags = options.caseSensitive ? 'gu' : 'giu';
-  const boundary = options.wholeWord
-    ? `(?<![\\p{L}\\p{N}_])${escapeRegExp(needle)}(?![\\p{L}\\p{N}_])`
-    : escapeRegExp(needle);
-  let pattern: RegExp;
-  try {
-    pattern = new RegExp(boundary, flags);
-  } catch {
-    return [];
-  }
+  const pattern = createSearchPattern(query, options);
+  if (!pattern) return [];
   const containerOccurrences = new Map<string, number>();
   return collectEditableSourceText(code)
     .filter((entry) => !isStructuralIdentifier(code, entry.range))
@@ -90,4 +96,27 @@ export const searchEditableSourceText = (
         } satisfies DiagramSearchResult;
       });
     });
+};
+
+export const searchVisualConnectionText = (
+  connections: State['visualConnections'],
+  query: string,
+  options: SearchOptions
+): DiagramSearchResult[] => {
+  const pattern = createSearchPattern(query, options);
+  if (!pattern) return [];
+  return Object.values(connections ?? {}).flatMap((connection) =>
+    [...connection.label.matchAll(pattern)].map((match) => {
+      const start = match.index ?? 0;
+      return {
+        connectionId: connection.id,
+        containerText: connection.label,
+        id: `connection:${connection.id}:${start}:${start + match[0].length}`,
+        kind: '箭头文字',
+        occurrence: 0,
+        range: { end: start + match[0].length, start },
+        text: match[0]
+      } satisfies DiagramSearchResult;
+    })
+  );
 };

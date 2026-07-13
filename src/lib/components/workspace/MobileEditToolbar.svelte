@@ -1,5 +1,10 @@
 <script lang="ts">
   import { Button } from '$lib/components/ui/button';
+  import {
+    connectionEditor,
+    finishConnectionCreation,
+    startConnectionCreation
+  } from '$lib/util/connectionEditor.svelte';
   import { closeCommandPalette, openCommandPalette } from '$lib/util/commandRegistry.svelte';
   import { closeGlobalSearch, openGlobalSearch } from '$lib/util/globalSearch.svelte';
   import { notify } from '$lib/util/notify';
@@ -13,6 +18,7 @@
   import { deleteSelectedElements } from '$lib/util/visualOperations';
   import { openWorkspacePanel } from '$lib/util/workspacePanels.svelte';
   import {
+    ArrowUpRight,
     Command,
     GitBranchPlus,
     History as HistoryIcon,
@@ -33,6 +39,16 @@
 
   const editText = (): void => {
     if (!current) return;
+    if (validatedState.current.visualConnections?.[current.id]) {
+      requestAnimationFrame(() => {
+        const input = document.querySelector<HTMLInputElement>(
+          '[data-testid="connection-toolbar"] input[aria-label="箭头文字"]'
+        );
+        input?.focus();
+        input?.select();
+      });
+      return;
+    }
     requestVisualEdit(current.id);
   };
 
@@ -90,7 +106,7 @@
     </div>
   {/if}
   <nav
-    class="grid grid-cols-5 gap-1 rounded-md border border-border-dark bg-card p-1 shadow-xl"
+    class="grid grid-cols-6 gap-1 rounded-md border border-border-dark bg-card p-1 shadow-xl"
     aria-label="手机编辑工具">
     <Button
       class="h-12 flex-col gap-0 px-1 text-[11px]"
@@ -107,6 +123,15 @@
     <Button class="h-12 flex-col gap-0 px-1 text-[11px]" variant="ghost" onclick={openLayers}>
       <Layers class="size-4" />
       图层
+    </Button>
+    <Button
+      class="h-12 flex-col gap-0 px-1 text-[11px]"
+      variant={connectionEditor.isCreating ? 'accent' : 'ghost'}
+      aria-pressed={connectionEditor.isCreating}
+      onclick={() =>
+        connectionEditor.isCreating ? finishConnectionCreation() : startConnectionCreation()}>
+      <ArrowUpRight class="size-4" />
+      箭头
     </Button>
     <Button
       class="h-12 flex-col gap-0 px-1 text-[11px]"
