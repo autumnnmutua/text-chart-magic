@@ -4,8 +4,10 @@
   import { notify, prompt } from '$lib/util/notify';
   import { serializeState } from '$lib/util/serde';
   import { inputState, replaceInputState } from '$lib/util/state.svelte';
+  import { clearVisualSelection } from '$lib/util/visualSelection.svelte';
   import { logEvent } from '$lib/util/stats';
   import dayjs from 'dayjs';
+  import 'dayjs/locale/zh-cn';
   import dayjsRelativeTime from 'dayjs/plugin/relativeTime';
   import BookmarkIcon from '~icons/material-symbols/bookmark-outline-rounded';
   import TrashAltIcon from '~icons/material-symbols/delete-outline-rounded';
@@ -28,12 +30,13 @@
   } from './historyState.svelte';
 
   dayjs.extend(dayjsRelativeTime);
+  dayjs.locale('zh-cn');
 
   const baseTabs: Tab[] = [
-    { id: 'manual', title: 'Saved', icon: BookmarkIcon },
-    { id: 'auto', title: 'Timeline', icon: HistoryIcon }
+    { id: 'manual', title: '已保存', icon: BookmarkIcon },
+    { id: 'auto', title: '时间线', icon: HistoryIcon }
   ];
-  const loaderTab: Tab = { id: 'loader', title: 'Revisions', icon: GitAltIcon };
+  const loaderTab: Tab = { id: 'loader', title: '修订记录', icon: GitAltIcon };
 
   const tabs = $derived(
     historyState.loaderEntries.length > 0 ? [loaderTab, ...baseTabs] : baseTabs
@@ -50,8 +53,8 @@
 
   const emptyMessage = $derived(
     historyState.mode === 'auto'
-      ? 'No timeline snapshots yet.\nThe Timeline is saved automatically every minute.'
-      : 'No saved states yet.\nClick the Save button to bookmark the current diagram and restore it later.'
+      ? '还没有时间线快照。\n编辑器会每分钟自动保存一次。'
+      : '还没有保存的版本。\n点击保存按钮即可收藏当前图表，之后可以随时恢复。'
   );
 
   const tabSelectHandler = (tab: Tab) => {
@@ -79,26 +82,34 @@
       if (!file) {
         return;
       }
-      const data: HistoryEntry[] = JSON.parse(await file.text());
-      const { restored, invalid, duplicates } = restoreEntries(data);
-      notify(`${restored} restored, ${duplicates} duplicate, ${invalid} invalid.`);
+      try {
+        const data: unknown = JSON.parse(await file.text());
+        if (!Array.isArray(data)) throw new Error('history must be an array');
+        const { restored, invalid, duplicates } = restoreEntries(data as HistoryEntry[]);
+        notify(
+          `已恢复 ${restored} 条，跳过 ${duplicates} 条重复记录，发现 ${invalid} 条无效记录。`
+        );
+      } catch {
+        notify('导入失败：请选择由本编辑器导出的有效历史记录文件。');
+      }
     });
     input.click();
   };
 
   const saveHistory = () => {
     if (!addManualEntry($state.snapshot(inputState))) {
-      notify('State already saved.');
+      notify('当前图表已经保存过了。');
     }
   };
 
   const clearAll = () => {
-    if (prompt('Clear all saved items?')) {
+    if (prompt('确定清空当前列表里的所有记录吗？')) {
       clearActive();
     }
   };
 
   const restoreHistoryItem = (state: State): void => {
+    clearVisualSelection();
     replaceInputState({ ...state, updateDiagram: true });
   };
 
@@ -120,14 +131,14 @@
         variant="ghost"
         id="uploadHistory"
         onclick={uploadHistory}
-        title="Upload history"><UploadIcon /></Button>
+        title="导入历史记录"><UploadIcon /></Button>
       {#if historyState.entries.length > 0}
         <Button
           id="downloadHistory"
           size="icon"
           variant="ghost"
           onclick={downloadHistory}
-          title="Download history"><DownloadIcon /></Button>
+          title="导出历史记录"><DownloadIcon /></Button>
       {/if}
       <Separator orientation="vertical" />
       <Button
@@ -135,7 +146,7 @@
         size="icon"
         variant="ghost"
         onclick={saveHistory}
-        title="Save current state"><SaveIcon /></Button>
+        title="保存当前图表"><SaveIcon /></Button>
       {#if historyState.mode !== 'loader'}
         <Button
           id="clearHistory"
@@ -143,7 +154,7 @@
           variant="ghost"
           class="hover:text-destructive"
           onclick={clearAll}
-          title="Delete all saved states"><TrashAltIcon /></Button>
+          title="清空当前列表"><TrashAltIcon /></Button>
       {/if}
     </div>
   {/snippet}
@@ -157,7 +168,7 @@
                 <a
                   href={url}
                   target="_blank"
-                  title="Open revision in new tab"
+                  title="在新标签页打开修订版本"
                   class="text-blue-500 hover:underline">{name}</a>
               {:else}
                 <span class="whitespace-nowrap">{name}</span>
@@ -177,13 +188,13 @@
                 rel="noopener"
                 size="icon"
                 variant="ghost"
-                title="Open in new tab">
+                title="在新标签页打开">
                 <OpenInNewIcon />
               </Button>
               <Button
                 size="icon"
                 variant="ghost"
-                title="Restore this version"
+                title="恢复这个版本"
                 onclick={() => restoreHistoryItem(state)}>
                 <UndoIcon />
               </Button>
@@ -192,7 +203,7 @@
                   size="icon"
                   variant="ghost"
                   class="hover:text-destructive"
-                  title="Delete this version"
+                  title="删除这个版本"
                   onclick={() => removeEntry(id)}>
                   <TrashAltIcon />
                 </Button>

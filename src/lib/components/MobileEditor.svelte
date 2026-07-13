@@ -1,6 +1,8 @@
 <script lang="ts">
   import type { EditorProps } from '$/types';
-  import { validatedState } from '$/util/state.svelte';
+  import { editorFocus } from '$/util/editorFocus.svelte';
+  import { updateCodeStore, validatedState } from '$/util/state.svelte';
+  import { findVisualTextRange } from '$/util/visualTextEdit';
   import { json, jsonLanguage } from '@codemirror/lang-json';
   import { markdown } from '@codemirror/lang-markdown';
   import { yamlFrontmatter } from '@codemirror/lang-yaml';
@@ -19,10 +21,29 @@
   // so a reactive currentText would make every keystroke re-run the effect
   // against the not-yet-revalidated state and revert the user's input.
   let currentText = '';
+  let handledFocusRequestID = 0;
+  let pendingFocus: (typeof editorFocus)['current'];
   const themeCompartment = new Compartment();
   const languageCompartment = new Compartment();
 
   const { onUpdate }: EditorProps = $props();
+
+  const applyPendingFocus = () => {
+    if (!editorView || !pendingFocus || validatedState.current.editorMode !== 'code') return;
+    const range = findVisualTextRange(editorView.state.doc.toString(), {
+      occurrence: pendingFocus.occurrence,
+      sourceId: pendingFocus.sourceId,
+      text: pendingFocus.text
+    });
+    if (range) {
+      editorView.dispatch({
+        effects: EditorView.scrollIntoView(range.start, { y: 'center' }),
+        selection: { anchor: range.start, head: range.end }
+      });
+    }
+    editorView.focus();
+    pendingFocus = undefined;
+  };
 
   $effect(() => {
     editorView?.dispatch({
@@ -30,14 +51,26 @@
     });
   });
 
+  $effect(() => {
+    const request = editorFocus.current;
+    if (!request || request.id === handledFocusRequestID) return;
+    handledFocusRequestID = request.id;
+    pendingFocus = request;
+    updateCodeStore({ editorMode: 'code' });
+    requestAnimationFrame(applyPendingFocus);
+  });
+
   onMount(() => {
+    const initial = validatedState.current;
+    const initialIsJson = initial.editorMode === 'config';
+    currentText = initialIsJson ? initial.mermaid : initial.code;
     editorView = new EditorView({
       state: EditorState.create({
         doc: currentText,
         extensions: [
           basicSetup,
-          languageCompartment.of([]),
-          themeCompartment.of([]),
+          languageCompartment.of(initialIsJson ? json() : yamlFrontmatter({ content: markdown() })),
+          themeCompartment.of(mode.current === 'dark' ? vsCodeDark : vsCodeLight),
           EditorView.updateListener.of((update) => {
             if (update.docChanged) {
               const newText = update.state.doc.toString();
@@ -66,27 +99,31 @@
 
     return () => {
       editorView?.destroy();
+      editorView = undefined;
     };
   });
 
   $effect(() => {
     const { editorMode, code, mermaid } = validatedState.current;
     const text = editorMode === 'code' ? code : mermaid;
-    if (currentText === text || !editorView) {
+    if (!editorView) {
       return;
     }
-    currentText = text;
-    editorView.dispatch({
-      changes: {
-        from: 0,
-        to: editorView.state.doc.length,
-        insert: text
-      }
-    });
+    if (currentText !== text) {
+      currentText = text;
+      editorView.dispatch({
+        changes: {
+          from: 0,
+          to: editorView.state.doc.length,
+          insert: text
+        }
+      });
+    }
     const stateLanguage = editorView.state.facet(language);
     const isStateJson = stateLanguage === jsonLanguage;
     const isCodeJson = editorMode === 'config';
     if (stateLanguage && isStateJson === isCodeJson) {
+      applyPendingFocus();
       return;
     }
     editorView.dispatch({
@@ -94,6 +131,7 @@
         isCodeJson ? json() : yamlFrontmatter({ content: markdown() })
       )
     });
+    applyPendingFocus();
   });
 </script>
 

@@ -1,20 +1,62 @@
 import type { HistoryEntry, HistoryType, Optional, State } from '$lib/types';
+import { diagramStateKey } from '$lib/util/diagramStateKey';
 import { persisted, readJSON, type Persisted } from '$lib/util/persist.svelte';
-import { inputState } from '$lib/util/state.svelte';
+import { inputState, normalizeState } from '$lib/util/state.svelte';
 import { logEvent } from '$lib/util/stats';
 import { generateSlug } from 'random-word-slugs';
 import { v4 as uuidV4 } from 'uuid';
 
 const MAX_AUTO_HISTORY_LENGTH = 30;
 const AUTO_SAVE_INTERVAL = 60_000;
+const LEGACY_ENTRY_NAME = '历史记录';
+type LoaderHistoryEntry = Extract<HistoryEntry, { type: 'loader' }>;
 
-const auto = persisted<HistoryEntry[]>('autoHistoryStore', []);
-const manual = persisted<HistoryEntry[]>('manualHistoryStore', []);
+const normalizeStoredEntry = (
+  entry: unknown,
+  fallbackType?: 'auto' | 'manual'
+): HistoryEntry | null => {
+  if (!entry || typeof entry !== 'object') return null;
+  const candidate = entry as Partial<HistoryEntry>;
+  const state = candidate.state as Partial<State> | undefined;
+  const type =
+    candidate.type === 'auto' || candidate.type === 'manual' ? candidate.type : fallbackType;
+  if (!type || !Number.isFinite(candidate.time) || typeof state?.code !== 'string') {
+    return null;
+  }
+  return {
+    id: typeof candidate.id === 'string' && candidate.id ? candidate.id : uuidV4(),
+    name:
+      typeof candidate.name === 'string' && candidate.name.trim()
+        ? candidate.name
+        : LEGACY_ENTRY_NAME,
+    state: normalizeState(state),
+    time: candidate.time as number,
+    type
+  };
+};
+
+const readStoredEntries = (key: string, type: 'auto' | 'manual'): HistoryEntry[] => {
+  const value = readJSON<unknown>(key, []);
+  return Array.isArray(value)
+    ? value
+        .map((entry) => normalizeStoredEntry(entry, type))
+        .filter((entry): entry is HistoryEntry => entry !== null)
+    : [];
+};
+
+const auto = persisted<HistoryEntry[]>(
+  'autoHistoryStore',
+  readStoredEntries('autoHistoryStore', 'auto')
+);
+const manual = persisted<HistoryEntry[]>(
+  'manualHistoryStore',
+  readStoredEntries('manualHistoryStore', 'manual')
+);
 const mode = persisted<HistoryType>('autoHistoryMode', 'manual');
 let loader = $state<HistoryEntry[]>([]);
 
 // Loader entries are in-memory, so a persisted 'loader' mode is empty after reload.
-if (mode.value === 'loader') {
+if (!['auto', 'manual'].includes(mode.value)) {
   mode.value = 'manual';
 }
 
@@ -49,15 +91,13 @@ export const setMode = (next: HistoryType): void => {
   mode.value = next;
 };
 
-// Dedup key: only the fields that define the diagram, so volatile/view-only
-// fields (renderCount, pan/zoom, …) don't count as a change.
-export const stateKey = (state: State): string =>
-  JSON.stringify({ code: state.code, mermaid: state.mermaid });
+// Pan, zoom and transient render fields do not define a history revision.
+export const stateKey = diagramStateKey;
 
 const createEntry = (state: State, type: 'auto' | 'manual'): HistoryEntry => ({
   id: uuidV4(),
   name: generateSlug(2),
-  state,
+  state: structuredClone(state),
   time: Date.now(),
   type
 });
@@ -86,10 +126,8 @@ export const addAutoEntry = (state: State): boolean =>
   addEntry(auto, state, 'auto', MAX_AUTO_HISTORY_LENGTH);
 
 // Replaces the in-memory revisions (e.g. when a gist is loaded), assigning ids.
-export const setLoaderEntries = (entries: Optional<HistoryEntry, 'id'>[]): void => {
-  loader = entries.map((entry) =>
-    entry.id ? (entry as HistoryEntry) : { ...entry, id: uuidV4() }
-  );
+export const setLoaderEntries = (entries: Optional<LoaderHistoryEntry, 'id'>[]): void => {
+  loader = entries.map((entry) => ({ ...entry, id: entry.id || uuidV4() }));
 };
 
 export const removeEntry = (id: string): void => {
@@ -110,8 +148,16 @@ export const clearActive = (): void => {
   logEvent('history', { action: 'clear', type: 'all' });
 };
 
-const validateEntry = (entry: HistoryEntry): boolean =>
-  Boolean(entry && entry.type && entry.state) && typeof entry.time === 'number';
+const isRestorableEntry = (entry: unknown): entry is HistoryEntry => {
+  if (!entry || typeof entry !== 'object') return false;
+  const candidate = entry as Partial<HistoryEntry>;
+  const state = candidate.state as Partial<State> | undefined;
+  return (
+    (candidate.type === 'auto' || candidate.type === 'manual') &&
+    Number.isFinite(candidate.time) &&
+    Boolean(state && typeof state.code === 'string')
+  );
+};
 
 export interface RestoreResult {
   restored: number;
@@ -122,7 +168,10 @@ export interface RestoreResult {
 // Routes each uploaded entry to the store matching its own type, skipping ids
 // that already exist.
 export const restoreEntries = (data: HistoryEntry[]): RestoreResult => {
-  const valid = data.filter((entry) => validateEntry(entry));
+  const valid = data
+    .filter((entry) => isRestorableEntry(entry))
+    .map((entry) => normalizeStoredEntry(entry))
+    .filter((entry): entry is HistoryEntry => entry !== null);
   const invalid = data.length - valid.length;
   let restored = 0;
 
@@ -135,8 +184,15 @@ export const restoreEntries = (data: HistoryEntry[]): RestoreResult => {
     if (incoming.length === 0) {
       continue;
     }
-    const existingIDs = slot.value.map(({ id }) => id);
-    const fresh = incoming.filter(({ id }) => !existingIDs.includes(id));
+    const seenIDs = Object.fromEntries(slot.value.map(({ id }) => [id, true])) as Record<
+      string,
+      true
+    >;
+    const fresh = incoming.filter(({ id }) => {
+      if (seenIDs[id]) return false;
+      seenIDs[id] = true;
+      return true;
+    });
     restored += fresh.length;
     slot.value = [...slot.value, ...fresh].sort((a, b) => b.time - a.time);
   }
@@ -146,14 +202,11 @@ export const restoreEntries = (data: HistoryEntry[]): RestoreResult => {
   return { restored, invalid, duplicates };
 };
 
-const setIDs = (entries: HistoryEntry[]): HistoryEntry[] =>
-  entries.map((entry) => (entry.id ? entry : { ...entry, id: uuidV4() }));
-
 // One-time migration: re-reads localStorage so entries written by an older
-// version get ids, then persists and updates the reactive state.
+// version get normalized, then persists and updates the reactive state.
 export const injectHistoryIDs = (): void => {
-  auto.value = setIDs(readJSON<HistoryEntry[]>('autoHistoryStore', []));
-  manual.value = setIDs(readJSON<HistoryEntry[]>('manualHistoryStore', []));
+  auto.value = readStoredEntries('autoHistoryStore', 'auto');
+  manual.value = readStoredEntries('manualHistoryStore', 'manual');
 };
 
 let autoSaveTimer: ReturnType<typeof setInterval> | undefined;

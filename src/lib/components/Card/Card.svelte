@@ -41,12 +41,29 @@
     }
   };
 
+  const handleHeaderClick = (event: MouseEvent) => {
+    const target = event.target;
+    if (
+      target instanceof Element &&
+      target.closest('button, a, input, select, textarea, [role="tab"], [contenteditable="true"]')
+    ) {
+      return;
+    }
+    toggleCardOpen();
+  };
+
+  const handleHeaderKeydown = (event: KeyboardEvent) => {
+    if (event.currentTarget !== event.target || !['Enter', ' '].includes(event.key)) return;
+    event.preventDefault();
+    toggleCardOpen();
+  };
+
   let isTabsShown = $derived(isOpen && tabs.length > 0);
 </script>
 
 <div
   class={[
-    'card flex h-fit flex-col overflow-hidden rounded-2xl border-2 border-muted',
+    'card flex h-fit flex-col overflow-hidden rounded-lg border-2 border-muted',
     isOpen && 'isOpen flex-grow',
     isStackable ? 'flex-1 group-has-[.isOpen]:w-full group-has-[.isOpen]:flex-none' : 'w-full'
   ]}>
@@ -57,10 +74,10 @@
       'flex h-11 flex-none cursor-pointer items-center justify-between bg-muted p-2 whitespace-nowrap',
       isTabsShown && 'pb-1'
     ]}
-    onclick={toggleCardOpen}
-    onkeypress={toggleCardOpen}>
+    onclick={handleHeaderClick}
+    onkeydown={handleHeaderKeydown}>
     {#if icon || title}
-      <span role="menubar" tabindex="0" class="flex w-fit items-center gap-3">
+      <span class="flex w-fit items-center gap-3">
         {#if icon}
           <icon.component class={icon.class} />
         {/if}

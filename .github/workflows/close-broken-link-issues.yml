@@ -32,7 +32,7 @@ jobs:
             const commentBody = [
               `@${context.payload.issue.user.login} This issue was automatically closed because the title only contains "Broken link" without additional details.`,
               '',
-              '**Please only open issues here if something is broken in the live editor itself** (e.g. a link fails to load, the editor UI misbehaves, or a feature of mermaid.live does not work).',
+              '**Please only open issues here if something is broken in the chart editor itself** (e.g. a link fails to load, the editor UI misbehaves, or a feature of the deployed editor does not work).',
               '',
               '**Do not open issues here for syntax errors or invalid Mermaid diagram code.** Those belong in the main Mermaid repository: [mermaid-js/mermaid](https://github.com/mermaid-js/mermaid/issues/new).',
               '',

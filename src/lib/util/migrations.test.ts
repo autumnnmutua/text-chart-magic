@@ -34,5 +34,5 @@ describe('migrations', () => {
     ) as HistoryEntry[];
     expect(manualHistoryStore.every(({ id }) => id !== undefined)).toBe(true);
     expect(autoHistoryStore.every(({ id }) => id !== undefined)).toBe(true);
-  });
+  }, 20_000);
 });

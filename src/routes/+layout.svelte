@@ -17,9 +17,10 @@
   // This can be removed once https://github.com/sveltejs/kit/issues/1612 is fixed.
   // Then move it into src and vite will bundle it automatically.
   onMount(() => {
-    window.addEventListener('hashchange', () => {
+    const handleHashChange = () => {
       void initHandler();
-    });
+    };
+    window.addEventListener('hashchange', handleHashChange);
 
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker
@@ -31,6 +32,8 @@
           console.log('Service worker registration failed, error:', error);
         });
     }
+
+    return () => window.removeEventListener('hashchange', handleHashChange);
   });
 
   $effect(() => {
@@ -47,8 +50,8 @@
 
 {#if loadingState.loading}
   <div
-    class="absolute top-0 left-0 z-50 flex h-screen w-screen justify-center bg-gray-600 align-middle opacity-50">
-    <div class="my-auto text-4xl font-bold text-indigo-100">
+    class="absolute top-0 left-0 z-50 flex h-screen w-screen justify-center bg-stone-950/55 align-middle">
+    <div class="my-auto text-center text-xl font-semibold text-orange-50">
       <div class="loader mx-auto"></div>
       <div>{loadingState.message}</div>
     </div>
@@ -59,7 +62,7 @@
   .loader {
     border: 0.45em solid #f3f3f3;
     border-radius: 50%;
-    border-top: 0.45em solid #6365f1;
+    border-top: 0.45em solid #f97316;
     width: 3em;
     height: 3em;
     -webkit-animation: spin 2s linear infinite; /* Safari */

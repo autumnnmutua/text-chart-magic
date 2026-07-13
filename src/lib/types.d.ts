@@ -12,10 +12,6 @@ export interface MarkerData {
   endColumn: number;
 }
 
-export interface TabEvents {
-  select: Tab;
-}
-
 export interface Tab {
   id: string;
   title: string;
@@ -35,6 +31,20 @@ export interface State {
   pan?: { x: number; y: number };
   zoom?: number;
   loader?: LoaderConfig;
+  visualStyles?: Record<string, VisualStyle>;
+  visualPositions?: Record<string, VisualPosition>;
+}
+
+export interface VisualPosition {
+  x: number;
+  y: number;
+}
+
+export interface VisualStyle {
+  alpha?: number;
+  fill?: string;
+  stroke?: string;
+  text?: string;
 }
 
 export interface ValidatedState extends State {
@@ -73,18 +83,10 @@ export type HistoryEntry = { id: string; state: State; time: number; url?: strin
       name: string;
     }
   | {
-      type: HistoryType;
+      type: Exclude<HistoryType, 'loader'>;
       name?: string;
     }
 );
-
-export type DocumentationConfig = Record<
-  string,
-  {
-    code: string;
-    config?: string;
-  }
->;
 
 export type EditorMode = 'code' | 'config';
 

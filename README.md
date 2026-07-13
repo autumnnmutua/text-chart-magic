@@ -1,121 +1,59 @@
-[![Join our Discord!](https://img.shields.io/static/v1?message=join%20chat&color=9cf&logo=discord&label=discord)](https://discord.gg/sKeNQX4Wtj)
-[![Netlify Status](https://api.netlify.com/api/v1/badges/27fa023d-7c73-4a3f-9791-b3b657a47100/deploy-status)](https://app.netlify.com/sites/mermaidjs/deploys)
+# 图表编辑器
 
-# Mermaid Live Editor
+中文、橙白配色的 Mermaid 可视化编辑器。打开后直接进入完整编辑界面，可在源码和图上编辑，并实时预览结果。
 
-Edit, preview and share mermaid charts/diagrams.
+稳定地址：[text-chart-magic.pages.dev](https://text-chart-magic.pages.dev/)
 
-## Features
+## 主要功能
 
-- Edit and preview flowcharts, sequence diagrams, gantt diagrams in real time.
-- Save the result as a svg
-- Get a link to a viewer of the diagram so that you can share it with others.
-- Get a link to edit the diagram so that someone else can tweak it and send a new link back
+- 27 类中文初始示例，覆盖流程图、树图、C4、甘特图、类图、需求图等常用图表。
+- 图上双击编辑文本，并可添加、删除和继续扩展分支。
+- C4、架构图和块图支持模块拖动，相关连线实时跟随。
+- 绘画软件式调色面板，支持 HSV、Alpha、HEX、RGB、HSL、预设和最近颜色。
+- 常驻撤回、重做、重置和历史保存，修改会保存在当前浏览器中。
+- 支持画布平移、缩放，以及 PNG、SVG 导出。
+- 不需要 API Key、数据库、模型或外部账号。
 
-## Live demo
+## 本地开发
 
-You can try out a [live version](https://mermaid.live/).
-
-# Contributors are welcome!
-
-If you want to speed up the progress for mermaid-live-editor, join the Discord channel and contact knsv.
-
-## Docker
-
-### Run published image
-
-```bash
-docker run --platform linux/amd64 --publish 8000:8080 ghcr.io/mermaid-js/mermaid-live-editor
-```
-
-The published docker image is built using our default environment variables. You cannot override them when running the image. If you need to customize them, you will need to build the image yourself.
-
-### To configure renderer URL
-
-When building set the MERMAID_RENDERER_URL build argument to the rendering
-service.
-Example:
-Default is`https://mermaid.ink`.
-Set to empty string to disable PNG and SVG links under Actions
-
-### To configure Kroki Instance URL
-
-When building set the MERMAID_KROKI_RENDERER_URL build argument to your Kroki
-instance.
-Default is `https://kroki.io`
-Set to empty string to disable Kroki link under Actions
-
-### To configure Analytics
-
-When building set the MERMAID_ANALYTICS_URL build argument to your plausible instance, and MERMAID_DOMAIN to your domain.
-
-Default is empty, disabling analytics.
-
-### To enable Mermaid Chart links and promotion
-
-When building set the MERMAID_IS_ENABLED_MERMAID_CHART_LINKS build argument to `true`
-
-Default is empty, disabling button to save to Mermaid Chart and promotional banner.
-
-### To update the Security modal
-
-The modal shown on clicking the security link assumes analytics, renderer, Kroki
-and Mermaid chart are enabled. You can update it by modifying `Privacy.svelte`
-if you wish.
-
-### Development
-
-```bash
-docker compose up --build
-```
-
-Then open http://localhost:3000
-
-### Building and running images locally
-
-#### Build
-
-```bash
-docker build -t mermaid-js/mermaid-live-editor .
-```
-
-#### Run
-
-```bash
-docker run --detach --name mermaid-live-editor --publish 8080:8080 mermaid-js/mermaid-live-editor
-```
-
-Visit: <http://localhost:8080>
-
-#### Stop
-
-```bash
-docker stop mermaid-live-editor
-```
-
-## Setup
-
-Below link will help you making a copy of the repository in your local system.
-
-https://docs.github.com/en/get-started/quickstart/fork-a-repo
-
-## Requirements
-
-- [Node.js](https://nodejs.org/en/) current LTS version
-- [pnpm](https://pnpm.io/) package manager. Install with `corepack enable pnpm`
-
-## Development
+要求 Node.js 24.16 或更高版本，并使用项目声明的 pnpm 版本。
 
 ```sh
+corepack enable
 pnpm install
 pnpm dev -- --open
 ```
 
-This app is created with Svelte Kit.
+默认开发地址为 <http://localhost:3000>。
 
-## Release
+## 检查与构建
 
-When a PR is created targeting master, it will be built and deployed by Netlify.
-The URL will be indicated in a Comment in the PR.
+```sh
+pnpm check
+pnpm test:unit -- --run --maxWorkers=1
+pnpm test:e2e -- --workers=1
+pnpm build
+```
 
-Once the PR is merged, it will automatically be released.
+生产静态文件会生成到 `docs/`。
+
+## Docker
+
+```sh
+docker compose up --build
+```
+
+或者构建并运行生产镜像：
+
+```sh
+docker build -t text-chart-editor .
+docker run --detach --name text-chart-editor --publish 8080:8080 text-chart-editor
+```
+
+随后访问 <http://localhost:8080>。
+
+## 数据与兼容
+
+编辑状态、历史记录、调色和手动位置保存在浏览器本地存储中。旧版分享链接和缺少新增字段的旧状态会在读取时补齐安全默认值；更换初始示例不会覆盖已经保存的作品。
+
+本项目基于 MIT 许可的 Mermaid Live Editor 继续开发。

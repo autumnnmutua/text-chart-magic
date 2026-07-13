@@ -1,13 +1,13 @@
-# Security Policy
+# 安全策略
 
-## Supported Versions
+## 支持范围
 
-Live editor only has a single version, which will be maintained.
+图表编辑器仅维护稳定地址当前发布的最新版本。
 
-| Version | Supported          |
-| ------- | ------------------ |
-| latest  | :white_check_mark: |
+| 版本     | 是否支持 |
+| -------- | -------- |
+| 最新版本 | 是       |
 
-## Reporting a Vulnerability
+## 报告安全问题
 
-To report a vulnerability, please e-mail security@mermaid.live with a description of the issue, the steps you took to create the issue, affected versions, and if known, mitigations for the issue.
+请通过项目仓库的安全报告或问题反馈入口提交漏洞说明、复现步骤、受影响版本，以及已知的缓解方式。请勿在报告中附带真实用户数据、访问令牌或其他敏感信息。

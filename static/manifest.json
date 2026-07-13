@@ -1,6 +1,6 @@
 {
-	"short_name": "Mermaid",
-	"name": "Mermaid Live Editor",
+	"short_name": "图表编辑器",
+	"name": "图表编辑器",
 	"icons": [
 		{
 			"src": "/favicon.png",
@@ -9,10 +9,10 @@
 		}
 	],
 	"start_url": "/edit",
-	"background_color": "#ff3670",
+	"background_color": "#fff7ed",
 	"display": "standalone",
 	"scope": "/edit",
-	"theme_color": "#ff3670",
-	"description": "FlowChart & Diagrams Editor.",
+	"theme_color": "#f97316",
+	"description": "中文图表与可视化编辑器。",
 	"orientation": "natural"
 }

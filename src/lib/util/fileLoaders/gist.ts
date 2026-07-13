@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { setLoaderEntries } from '$lib/components/History/historyState.svelte';
 import type { State } from '$lib/types';
 import { defaultState } from '$lib/util/state.svelte';
@@ -13,8 +12,16 @@ interface GithubFile {
   content: string;
 }
 
-const isValidGist = (files: any): boolean => {
-  return codeFileName in files;
+const isValidGist = (files: Record<string, GithubFile>): boolean => codeFileName in files;
+
+const getGistIdentifiers = (gistURL: string): { gistID: string; revisionID?: string } => {
+  const path = gistURL.split('github.com').pop();
+  if (!path) throw new Error(`无效的 GitHub Gist 地址：${gistURL}`);
+  const parts = path.split('/').filter(Boolean);
+  const gistID = parts.at(-2) === 'gists' ? parts.at(-1) : parts.at(1);
+  const revisionID = parts.at(-2) === 'gists' ? undefined : parts.at(2);
+  if (!gistID) throw new Error(`无效的 GitHub Gist 地址：${gistURL}`);
+  return { gistID, revisionID };
 };
 
 const getFileContent = async (file: GithubFile): Promise<string> => {
@@ -36,16 +43,11 @@ interface GistData {
 interface GistResponse {
   files: Record<string, GithubFile>;
   html_url: string;
-  history: { url: string; committed_at: string; version: string; user: { login: string } }[];
+  history: { url: string; committed_at: string; version: string; user?: { login: string } }[];
 }
 
 const getGistData = async (gistURL: string): Promise<GistData> => {
-  const path = gistURL.split('github.com').pop();
-  if (!path) {
-    throw new Error('Invalid GitHub URL' + gistURL);
-  }
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [_, __, gistID, revisionID] = path.split('/');
+  const { gistID, revisionID } = getGistIdentifiers(gistURL);
 
   const { html_url, files, history }: GistResponse = await fetchJSON(
     `https://api.github.com/gists/${gistID}${revisionID ? '/' + revisionID : ''}`
@@ -57,8 +59,9 @@ const getGistData = async (gistURL: string): Promise<GistData> => {
       config = await getFileContent(files[configFileName]);
     }
     const currentItem = history[0];
+    if (!currentItem) throw new Error('Gist 没有可读取的历史版本');
     return {
-      author: currentItem.user.login,
+      author: currentItem.user?.login ?? '未知用户',
       code,
       config,
       time: new Date(currentItem.committed_at).getTime(),
@@ -67,7 +70,7 @@ const getGistData = async (gistURL: string): Promise<GistData> => {
       version: currentItem.version.slice(-7)
     };
   } else {
-    throw new Error('Invalid gist provided');
+    throw new Error('Gist 中缺少 code.mmd');
   }
 };
 
@@ -89,12 +92,7 @@ const getStateFromGist = (gist: GistData, gistURL: string = gist.url): State => 
 };
 
 export const loadGistData = async (gistURL: string): Promise<State> => {
-  const path = gistURL.split('github.com').pop();
-  if (!path) {
-    throw new Error('Invalid GitHub URL' + gistURL);
-  }
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [_, __, gistID, revisionID] = path.split('/');
+  const { gistID, revisionID } = getGistIdentifiers(gistURL);
 
   const { history }: GistResponse = await fetchJSON(
     `https://api.github.com/gists/${gistID}${revisionID ? '/' + revisionID : ''}`
@@ -109,12 +107,12 @@ export const loadGistData = async (gistURL: string): Promise<State> => {
     }
   }
   if (gistHistory.length === 0) {
-    throw new Error('Invalid gist provided');
+    throw new Error('Gist 中没有可读取的图表版本');
   }
   gistHistory.reverse();
   const entry = gistHistory.at(-1);
   if (!entry) {
-    throw new Error('Invalid gist provided');
+    throw new Error('Gist 中没有可读取的图表版本');
   }
   const state = getStateFromGist(entry, gistURL);
   setLoaderEntries(

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { persisted, readJSON, writeJSON } from './persist.svelte';
 
 beforeEach(() => {
@@ -35,6 +35,14 @@ describe('writeJSON', () => {
     writeJSON('key', { nested: { value: 2 } });
     expect(window.localStorage.getItem('key')).toBe('{"nested":{"value":2}}');
     expect(readJSON('key', {})).toEqual({ nested: { value: 2 } });
+  });
+
+  it('does not break the current session when storage writes fail', () => {
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('quota exceeded', 'QuotaExceededError');
+    });
+    expect(() => writeJSON('full', { value: 1 })).not.toThrow();
+    setItem.mockRestore();
   });
 });
 

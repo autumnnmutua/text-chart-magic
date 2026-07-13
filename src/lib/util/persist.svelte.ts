@@ -1,20 +1,28 @@
 /**
  * Runes-based localStorage persistence, shared by the persisted state in
- * `state.svelte.ts`, `migrations.svelte.ts`, `promo.svelte.ts` and History.
+ * `state.svelte.ts`, `migrations.svelte.ts` and History.
  *
  * Values are stored as plain JSON. Reads of missing or corrupt values fall
  * back to the provided default, so values written by older versions of the
  * editor (which serialized plain objects to the same JSON shape) stay loadable.
  */
 
-const hasStorage = (): boolean => typeof window !== 'undefined' && !!window.localStorage;
+const getStorage = (): Storage | undefined => {
+  if (typeof window === 'undefined') return undefined;
+  try {
+    return window.localStorage;
+  } catch {
+    return undefined;
+  }
+};
 
 export const readJSON = <T>(key: string, fallback: T): T => {
-  if (!hasStorage()) {
+  const storage = getStorage();
+  if (!storage) {
     return fallback;
   }
   try {
-    const raw = window.localStorage.getItem(key);
+    const raw = storage.getItem(key);
     if (raw === null) {
       return fallback;
     }
@@ -27,8 +35,12 @@ export const readJSON = <T>(key: string, fallback: T): T => {
 };
 
 export const writeJSON = (key: string, value: unknown): void => {
-  if (hasStorage()) {
-    window.localStorage.setItem(key, JSON.stringify(value));
+  const storage = getStorage();
+  if (!storage) return;
+  try {
+    storage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Keep the in-memory editor usable when storage is blocked or full.
   }
 };
 

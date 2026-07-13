@@ -1,16 +1,14 @@
-import { test } from './test';
+import { expect, test } from './test';
 
 test.describe('Error display tests', () => {
-  test('should show AI Repair button for syntax errors in Code tab', async ({ editPage }) => {
+  test('代码语法错误不会破坏最后一次有效画面或显示外部 AI 入口', async ({ editPage }) => {
     // Enter code with syntax error
     await editPage.clearEditor();
     await editPage.typeInEditor('graph TD\nA --> B -->');
 
-    // Verify error is displayed
-    await editPage.checkError('Syntax error');
-
-    // Verify AI Repair button and help text is shown in Code tab
-    await editPage.checkAIHelperVisibility(true);
+    await editPage.checkInEditor('A --> B -->');
+    await editPage.checkTextInView('输入中文想法');
+    await expect(editPage.page.getByTestId('error-container')).toHaveCount(0);
   });
 
   test('should not show AI Repair button for errors in Config tab', async ({ editPage }) => {
@@ -26,9 +24,6 @@ test.describe('Error display tests', () => {
     await editPage.typeInEditor('{\n  "theme": "default",\n  invalid json');
 
     // Verify error is displayed
-    await editPage.checkError('Syntax error');
-
-    // Verify AI Repair button and help text is NOT shown in Config tab
-    await editPage.checkAIHelperVisibility(false);
+    await editPage.checkError('语法错误');
   });
 });

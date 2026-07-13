@@ -2,7 +2,10 @@
   import View from '$/components/View.svelte';
   import { initHandler } from '$/util/util';
   import { onMount } from 'svelte';
-  onMount(initHandler);
+
+  onMount(() => {
+    void initHandler();
+  });
 </script>
 
 <svelte:head>

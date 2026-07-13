@@ -1,23 +1,16 @@
 <script lang="ts">
   import Card from '$/components/Card/Card.svelte';
-  import CopyButton from '$/components/CopyButton.svelte';
-  import CopyInput from '$/components/CopyInput.svelte';
-  import ExternalLinkWrapper from '$/components/ExternalLinkWrapper.svelte';
   import { Button } from '$/components/ui/button';
   import { Input } from '$/components/ui/input';
-  import { Separator } from '$/components/ui/separator';
   import * as ToggleGroup from '$/components/ui/toggle-group';
-  import { TID } from '$/constants';
-  import { getDomain } from '$/util/util';
-  import { browser } from '$app/environment';
   import { waitForRender } from '$lib/util/autoSync';
-  import { inputState, updateCodeStore, urls, validatedState } from '$lib/util/state.svelte';
+  import { notify } from '$lib/util/notify';
+  import { updateCodeStore, validatedState } from '$lib/util/state.svelte';
   import { logEvent } from '$lib/util/stats';
   import { version as FAVersion } from '@fortawesome/fontawesome-free/package.json';
   import dayjs from 'dayjs';
   import { toBase64 } from 'js-base64';
   import DownloadIcon from '~icons/material-symbols/download';
-  import ExternalLinkIcon from '~icons/material-symbols/open-in-new-rounded';
   import WidthIcon from '~icons/material-symbols/width-rounded';
 
   const FONT_AWESOME_URL = `https://cdnjs.cloudflare.com/ajax/libs/font-awesome/${FAVersion}/css/all.min.css`;
@@ -27,12 +20,7 @@
   const getFileName = (extension: string) =>
     `mermaid-diagram-${dayjs().format('YYYY-MM-DD-HHmmss')}.${extension}`;
 
-  /**
-   * Fix text clipping in exported SVG for hand-drawn (rough) mode.
-   * svg2roughjs copies foreignObject elements but their height is often insufficient,
-   * causing text bottom edges to be cut off regardless of language.
-   */
-  const fixForeignObjectClipping = (svg: HTMLElement) => {
+  const fixForeignObjectClipping = (svg: SVGSVGElement) => {
     const foreignObjects = svg.querySelectorAll('foreignObject');
     foreignObjects.forEach((foreignObj) => {
       const currentHeight = parseFloat(foreignObj.getAttribute('height') || '0');
@@ -45,7 +33,6 @@
       foreignObj.setAttribute('height', newHeight.toString());
       foreignObj.setAttribute('y', (currentY - heightDiff / 2).toString());
 
-      // Ensure inner HTML elements are vertically centered within the expanded area
       const htmlElements = foreignObj.querySelectorAll('div, span, p');
       htmlElements.forEach((htmlEl) => {
         const el = htmlEl as HTMLElement;
@@ -58,15 +45,18 @@
   };
 
   const getSvgElement = () => {
-    const svgElement = document.querySelector('#container svg')?.cloneNode(true) as HTMLElement;
+    const source = document.querySelector<SVGSVGElement>('#container svg');
+    if (!source) throw new Error('No rendered SVG is available');
+    const svgElement = source.cloneNode(true) as SVGSVGElement;
     svgElement.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
+    // Export diagram coordinates, not the temporary viewport pan/zoom matrix.
+    svgElement.querySelector('.svg-pan-zoom_viewport')?.removeAttribute('transform');
     return svgElement;
   };
 
-  const getBase64SVG = (svg?: HTMLElement, width?: number, height?: number): string => {
+  const getBase64SVG = (svg?: SVGSVGElement, width?: number, height?: number): string => {
     if (svg) {
-      // Prevents the SVG size of the interface from being changed
-      svg = svg.cloneNode(true) as HTMLElement;
+      svg = svg.cloneNode(true) as SVGSVGElement;
     }
     if (height) {
       svg?.setAttribute('height', `${height}px`);
@@ -74,8 +64,6 @@
     if (width) {
       svg?.setAttribute('width', `${width}px`);
     }
-    // Workaround https://stackoverflow.com/questions/28690643/firefox-error-rendering-an-svg-image-to-html5-canvas-with-drawimage
-
     if (!svg) {
       svg = getSvgElement();
     }
@@ -106,61 +94,68 @@ ${svgString}`);
   };
 
   const exportImage = async (event: Event, exporter: Exporter) => {
-    updateCodeStore({ panZoom: false });
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    await waitForRender();
-    const canvas = document.createElement('canvas');
-    const svg = document.querySelector<HTMLElement>('#container svg');
-    if (!svg) {
-      throw new Error('svg not found');
-    }
-
-    const box = svg.getBoundingClientRect();
-
-    // In rough mode, SVG has width/height="100%" so getBoundingClientRect returns
-    // the container size, not the actual diagram size. Use viewBox dimensions instead.
-    const svgEl = svg as unknown as SVGSVGElement;
-    const viewBox = svgEl.viewBox?.baseVal;
-    const contentWidth = viewBox && viewBox.width > 0 ? viewBox.width : box.width;
-    const contentHeight = viewBox && viewBox.height > 0 ? viewBox.height : box.height;
-
-    if (imageSizeMode === 'width') {
-      const ratio = contentHeight / contentWidth;
-      canvas.width = imageSize;
-      canvas.height = imageSize * ratio;
-    } else if (imageSizeMode === 'height') {
-      const ratio = contentWidth / contentHeight;
-      canvas.width = imageSize * ratio;
-      canvas.height = imageSize;
-    } else {
-      const multiplier = 2;
-      canvas.width = contentWidth * multiplier;
-      canvas.height = contentHeight * multiplier;
-    }
-
-    const context = canvas.getContext('2d');
-    if (!context) {
-      throw new Error('context not found');
-    }
-
-    context.fillStyle = window.getComputedStyle(document.body).getPropertyValue('--background');
-    context.fillRect(0, 0, canvas.width, canvas.height);
-
-    const image = new Image();
-    image.addEventListener('load', () => {
-      exporter(context, image)();
-      updateCodeStore({ panZoom: true });
-    });
-    image.src = `data:image/svg+xml;base64,${getBase64SVG(svg, canvas.width, canvas.height)}`;
-    // Fallback to set panZoom to true after 2 seconds
-    // This is a workaround for the case when the image is not loaded
-    setTimeout(() => {
-      if (!inputState.panZoom) {
-        updateCodeStore({ panZoom: true });
-      }
-    }, 2000);
     event.stopPropagation();
     event.preventDefault();
+    const originalPanZoom = validatedState.current.panZoom ?? true;
+    updateCodeStore({ panZoom: false });
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      await waitForRender();
+      const canvas = document.createElement('canvas');
+      const svg = document.querySelector<SVGSVGElement>('#container svg');
+      if (!svg) {
+        throw new Error('svg not found');
+      }
+
+      const box = svg.getBoundingClientRect();
+      const viewBox = svg.viewBox?.baseVal;
+      const contentWidth = viewBox && viewBox.width > 0 ? viewBox.width : box.width;
+      const contentHeight = viewBox && viewBox.height > 0 ? viewBox.height : box.height;
+      if (contentWidth <= 0 || contentHeight <= 0) {
+        throw new Error('Rendered SVG has invalid dimensions');
+      }
+      const requestedSize = Number.isFinite(imageSize)
+        ? Math.min(Math.max(Math.round(imageSize), 3), 10_000)
+        : 1080;
+
+      if (imageSizeMode === 'width') {
+        const ratio = contentHeight / contentWidth;
+        canvas.width = requestedSize;
+        canvas.height = requestedSize * ratio;
+      } else if (imageSizeMode === 'height') {
+        const ratio = contentWidth / contentHeight;
+        canvas.width = requestedSize * ratio;
+        canvas.height = requestedSize;
+      } else {
+        const multiplier = 2;
+        canvas.width = contentWidth * multiplier;
+        canvas.height = contentHeight * multiplier;
+      }
+
+      const context = canvas.getContext('2d');
+      if (!context) {
+        throw new Error('context not found');
+      }
+
+      context.fillStyle = window.getComputedStyle(document.body).getPropertyValue('--background');
+      context.fillRect(0, 0, canvas.width, canvas.height);
+
+      const image = new Image();
+      await new Promise<void>((resolve, reject) => {
+        image.addEventListener('load', () => {
+          try {
+            exporter(context, image)();
+            resolve();
+          } catch (error) {
+            reject(error instanceof Error ? error : new Error(String(error)));
+          }
+        });
+        image.addEventListener('error', () => reject(new Error('image export failed')));
+        image.src = `data:image/svg+xml;base64,${getBase64SVG(svg, canvas.width, canvas.height)}`;
+      });
+    } finally {
+      updateCodeStore({ panZoom: originalPanZoom });
+    }
   };
 
   const downloadImage: Exporter = (context, image) => {
@@ -174,67 +169,24 @@ ${svgString}`);
     };
   };
 
-  const isClipboardAvailable = (): boolean => {
-    return Object.prototype.hasOwnProperty.call(window, 'ClipboardItem');
-  };
-
-  const clipboardCopy: Exporter = (context, image) => {
-    return () => {
-      const { canvas } = context;
-      context.drawImage(image, 0, 0, canvas.width, canvas.height);
-      canvas.toBlob((blob) => {
-        try {
-          if (!blob) {
-            throw new Error('blob is empty');
-          }
-          void navigator.clipboard.write([
-            new ClipboardItem({
-              [blob.type]: blob
-            })
-          ]);
-        } catch (error) {
-          console.error(error);
-        }
-      });
-    };
-  };
-
-  const onCopyClipboard = async (event?: Event) => {
-    if (!event) {
-      return;
-    }
-    await exportImage(event, clipboardCopy);
-    logEvent('copyClipboard');
-  };
-
   const onDownloadPNG = async (event: Event) => {
-    await exportImage(event, downloadImage);
-    logEvent('download', {
-      type: 'png'
-    });
+    try {
+      await exportImage(event, downloadImage);
+      logEvent('download', { type: 'png' });
+    } catch (error) {
+      console.error('PNG export failed', error);
+      notify('PNG 导出失败，请确认图表已经正常显示后重试。');
+    }
   };
 
   const onDownloadSVG = () => {
-    simulateDownload(getFileName('svg'), `data:image/svg+xml;base64,${getBase64SVG()}`);
-    logEvent('download', {
-      type: 'svg'
-    });
-  };
-
-  let gistURL = $state('');
-  $effect(() => {
-    const { loader } = validatedState.current;
-    if (loader?.type === 'gist') {
-      gistURL = loader.config.url;
+    try {
+      simulateDownload(getFileName('svg'), `data:image/svg+xml;base64,${getBase64SVG()}`);
+      logEvent('download', { type: 'svg' });
+    } catch (error) {
+      console.error('SVG export failed', error);
+      notify('SVG 导出失败，请确认图表已经正常显示后重试。');
     }
-  });
-
-  const loadGist = () => {
-    if (!gistURL) {
-      return alert('Please enter a Gist URL first');
-    }
-    window.location.href = `${window.location.pathname}?gist=${gistURL}`;
-    logEvent('loadGist');
   };
 
   let imageSizeMode: 'auto' | 'width' | 'height' = $state('auto');
@@ -246,78 +198,38 @@ ${svgString}`);
   });
 
   let imageSize = $state(1080);
-
-  const isNetlify = browser && window.location.host.includes('netlify');
 </script>
 
-{#snippet dualActionButton(text: string, download: (event: Event) => unknown, url?: string)}
-  <div class="flex flex-grow gap-0.5">
-    <Button
-      class={['flex-grow', url && 'rounded-r-none']}
-      onclick={download}
-      data-testid="download-{text}">
-      <DownloadIcon />
-      {text}
-    </Button>
-    <ExternalLinkWrapper domain={getDomain(url)} isVisible={!!url}>
-      <Button class="rounded-l-none" href={url} target="_blank" rel="noreferrer noopener">
-        <ExternalLinkIcon />
-      </Button>
-    </ExternalLinkWrapper>
-  </div>
-{/snippet}
-
-<Card title="Actions" isStackable icon={{ component: DownloadIcon, class: 'rotate-180' }}>
-  <div class="flex min-w-fit flex-col gap-2 p-2">
-    <div class="flex w-full items-center gap-2 py-2 whitespace-nowrap">
-      PNG size
+<Card title="导出" isStackable icon={{ component: DownloadIcon, class: 'rotate-180' }}>
+  <div class="flex min-w-fit flex-col gap-3 p-3">
+    <div class="flex w-full flex-wrap items-center gap-2 whitespace-nowrap">
+      <span class="text-sm font-medium">PNG 尺寸</span>
       <ToggleGroup.Root type="single" variant="outline" bind:value={imageSizeMode}>
-        <ToggleGroup.Item value="auto">Auto</ToggleGroup.Item>
-        <ToggleGroup.Item value="width">Width</ToggleGroup.Item>
-        <ToggleGroup.Item value="height">Height</ToggleGroup.Item>
+        <ToggleGroup.Item value="auto">自动</ToggleGroup.Item>
+        <ToggleGroup.Item value="width">宽度</ToggleGroup.Item>
+        <ToggleGroup.Item value="height">高度</ToggleGroup.Item>
       </ToggleGroup.Root>
       {#if imageSizeMode !== 'auto'}
         <WidthIcon
           class={['size-6 shrink-0 transition-all', imageSizeMode === 'width' && 'rotate-90']} />
       {/if}
       <Input
+        class="max-w-36"
         type="number"
         min="3"
         max="10000"
         disabled={imageSizeMode === 'auto'}
         bind:value={imageSize} />
     </div>
-    <div class="flex gap-2">
-      {@render dualActionButton('PNG', onDownloadPNG, urls.current.png)}
-      {@render dualActionButton('SVG', onDownloadSVG, urls.current.svg)}
-      <ExternalLinkWrapper domain={getDomain(urls.current.kroki)} isVisible={!!urls.current.kroki}>
-        <a target="_blank" rel="noreferrer" class="flex-grow" href={urls.current.kroki}>
-          <Button class="action-btn flex w-full items-center gap-2">
-            <ExternalLinkIcon /> Kroki
-          </Button>
-        </a>
-      </ExternalLinkWrapper>
+    <div class="grid grid-cols-2 gap-2">
+      <Button onclick={onDownloadPNG} data-testid="download-PNG">
+        <DownloadIcon />
+        PNG
+      </Button>
+      <Button onclick={onDownloadSVG} data-testid="download-SVG">
+        <DownloadIcon />
+        SVG
+      </Button>
     </div>
-    <Separator />
-    {#if isClipboardAvailable()}
-      <CopyButton onclick={onCopyClipboard} label="Copy Image" />
-    {/if}
-    <ExternalLinkWrapper
-      labelPrefix="Thumbnail generated by"
-      domain={getDomain(urls.current.png)}
-      isVisible={!!urls.current.mdCode}>
-      <CopyInput value={urls.current.mdCode} label="Copy Markdown" testID={TID.copyMarkdown} />
-    </ExternalLinkWrapper>
-    <div class="flex w-full items-center gap-2">
-      <Input type="url" bind:value={gistURL} placeholder="Enter Gist URL" />
-      <Button onclick={loadGist}>Load Gist</Button>
-    </div>
-    {#if isNetlify}
-      <div class="flex w-full items-center justify-center">
-        <a class="link text-sm text-gray-500 underline" href="https://netlify.com">
-          This site is powered by Netlify
-        </a>
-      </div>
-    {/if}
   </div>
 </Card>

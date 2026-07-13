@@ -10,25 +10,25 @@ test.describe('Site Loads', () => {
   });
 
   test('should keep code after reload', async ({ editPage, page }) => {
-    await editPage.checkInEditor('Car');
-    await editPage.checkTextInView('Car');
+    await editPage.checkInEditor('输入中文想法');
+    await editPage.checkTextInView('输入中文想法');
     await page.reload();
-    await editPage.checkInEditor('Car');
-    await editPage.checkTextInView('Car');
+    await editPage.checkInEditor('输入中文想法');
+    await editPage.checkTextInView('输入中文想法');
   });
 
   test('Check Redirect from old URL', async ({ page, editPage }) => {
     await editPage.start(
       '/#/edit/eyJjb2RlIjoiZ3JhcGggVERcbiAgICBBW0NocmlzdG1hc10gLS0-fEdldCBtb25leXwgQihHbyBzaG9wcGluZylcbiAgICBCIC0tPiBDe0xldCBtZSB0aGlua31cbiAgICBDIC0tPnxPbmV8IERbTGFwdG9wXVxuICAgIEMgLS0-fFR3b3wgRVtpUGhvbmVdXG4gICAgQyAtLT58VGhyZWV8IEZbZmE6ZmEtY2FyIENhcl0iLCJtZXJtYWlkIjp7InRoZW1lIjoiZGVmYXVsdCJ9LCJ1cGRhdGVFZGl0b3IiOmZhbHNlfQ'
     );
-    await expect(page).toHaveURL(/.*\/edit#pako:eNp/);
+    await expect(page).toHaveURL(/.*\/#pako:eNp/);
   });
 
   test('should load sample diagrams when clicked', async ({ editPage }) => {
     await editPage.toggleSampleDiagrams();
     await editPage.loadSampleDiagram('Pie');
-    await editPage.checkInEditor('pie title Pets adopted by volunteers');
-    await editPage.checkTextInView('Pets adopted by volunteers');
+    await editPage.checkInEditor('pie showData title 订单来源占比');
+    await editPage.checkTextInView('订单来源占比');
     await editPage.loadSampleDiagram('Class');
     await editPage.checkInEditor('classDiagram');
   });
@@ -73,7 +73,7 @@ test.describe('Site Loads', () => {
     let dialogAccepted = false;
     page.on('dialog', async (dialog) => {
       expect(dialog.type()).toBe('confirm');
-      expect(dialog.message()).toContain('from the config for safety');
+      expect(dialog.message()).toContain('为了安全，编辑器将移除以下高风险配置');
       await dialog.accept();
       dialogAccepted = true;
     });
@@ -110,7 +110,7 @@ test.describe('Site Loads', () => {
   test('should show troubleshooting steps if loading fails', async ({ editPage, page }) => {
     await editPage.start('/#/edit/eyJjb2RlIjoiZ3JhcGggVERcbiAg');
     await page.reload({ waitUntil: 'networkidle' });
-    await editPage.checkTextInView('Please Click here to Raise an issue in github.');
+    await editPage.checkTextInView('重新检查是不是链接读取失败');
   });
 });
 

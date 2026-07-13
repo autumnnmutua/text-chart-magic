@@ -1,15 +1,13 @@
-import { C, TID } from '$/constants';
+import { TID } from '$/constants';
 import { test as base, expect, type Locator, type Page } from '@playwright/test';
 import { verifyFileSizeGreaterThan, type EditorOptions } from './utils';
 
 export class EditorPage {
   readonly editor: Locator;
-  readonly markdownInput: Locator;
   readonly view: Locator;
 
   constructor(readonly page: Page) {
     this.editor = page.locator('css=.monaco-editor');
-    this.markdownInput = page.getByTestId(TID.copyMarkdown);
     this.view = page.locator('#view');
   }
 
@@ -39,27 +37,56 @@ export class EditorPage {
   }
 
   async toggleActions() {
-    await this.page.getByText('Actions', { exact: true }).click();
+    await this.page.getByText('\u5bfc\u51fa', { exact: true }).click();
   }
 
   async toggleSampleDiagrams() {
-    await this.page.getByText('Sample Diagrams', { exact: true }).click();
+    await this.page.getByText('\u793a\u4f8b\u56fe\u8868', { exact: true }).click();
   }
 
   async checkAndDownloadPNG(expectedSize: number) {
-    const downloadPNGPromise = verifyFileSizeGreaterThan(this.page, 'diagram', 'png', expectedSize);
-    await this.page.getByTestId(TID.downloadPNG).click();
+    const downloadPNGPromise = verifyFileSizeGreaterThan(this.page, 'png', expectedSize);
+    await this.page.getByTestId('download-PNG').click();
     return await downloadPNGPromise;
   }
 
   async downloadSVG(expectedSize: number) {
-    const downloadSVGPromise = verifyFileSizeGreaterThan(this.page, 'diagram', 'svg', expectedSize);
-    await this.page.getByTestId(TID.downloadSVG).click();
+    const downloadSVGPromise = verifyFileSizeGreaterThan(this.page, 'svg', expectedSize);
+    await this.page.getByTestId('download-SVG').click();
     return await downloadSVGPromise;
   }
 
   async loadSampleDiagram(diagramName: string) {
-    await this.page.getByText(diagramName, { exact: true }).click();
+    const diagramLabels: Record<string, string> = {
+      Architecture: '架构图',
+      Block: '块图',
+      C4: 'C4',
+      Class: '类图',
+      'Entity Relationship': '实体关系',
+      Flowchart: '流程图',
+      Gantt: '甘特图',
+      Git: 'Git 图',
+      Ishikawa: '鱼骨图',
+      Kanban: '看板',
+      Mindmap: '思维导图',
+      Packet: '数据包',
+      Pie: '饼图',
+      Quadrant: '象限图',
+      Radar: '雷达图',
+      Requirement: '需求图',
+      Sankey: '桑基图',
+      Sequence: '时序图',
+      State: '状态图',
+      Timeline: '时间线',
+      TreeView: '树图',
+      Treemap: '矩形树图',
+      'User Journey': '用户旅程',
+      Venn: '维恩图',
+      'Wardley Maps': '沃德利地图',
+      XY: 'XY 图',
+      ZenUML: 'ZenUML'
+    };
+    await this.page.getByText(diagramLabels[diagramName] ?? diagramName, { exact: true }).click();
   }
 
   async checkTextInView(text: string) {
@@ -86,14 +113,10 @@ export class EditorPage {
   }
 
   async setEditorMode(mode: 'Code' | 'Config') {
-    await this.page.getByRole('tab').getByText(mode).click();
-  }
-
-  async checkDocURL(url: string | RegExp) {
-    await expect(this.page.getByTestId(TID.diagramDocumentationButton)).toHaveAttribute(
-      'href',
-      url
-    );
+    await this.page
+      .getByRole('tab')
+      .getByText(mode === 'Code' ? '\u4ee3\u7801' : '\u914d\u7f6e')
+      .click();
   }
 
   async toggleTheme() {
@@ -103,24 +126,13 @@ export class EditorPage {
   async checkTheme(theme: 'light' | 'dark') {
     await expect(this.page.getByTestId(TID.themeToggleButton)).toHaveAttribute(
       'title',
-      `Switch to ${theme === 'light' ? 'dark' : 'light'} theme`
+      `\u5207\u6362\u5230${theme === 'light' ? '\u6df1\u8272' : '\u6d45\u8272'}\u4e3b\u9898`
     );
-  }
-
-  async checkAIHelperVisibility(shouldBeVisible: boolean) {
-    const button = this.page.getByTestId(TID.aiRepairButton);
-    const helpText = this.page.getByTestId(TID.aiHelpText);
-    await expect(button)[shouldBeVisible ? 'toBeVisible' : 'toBeHidden']();
-    await expect(helpText)[shouldBeVisible ? 'toBeVisible' : 'toBeHidden']();
   }
 }
 
 export const test = base.extend<{ editPage: EditorPage }>({
   editPage: async ({ page }, use) => {
-    // Dismiss the editor chooser modal so it doesn't block interactions
-    await page.addInitScript((key) => {
-      window.localStorage.setItem(key, 'true');
-    }, C.editorChooserDismissedKey);
     const editorPage = new EditorPage(page);
     await editorPage.start();
     await editorPage.toggleSampleDiagrams();

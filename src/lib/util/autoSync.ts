@@ -1,7 +1,7 @@
 import debounce from 'lodash-es/debounce';
 
 let shouldSync = true;
-let updater: () => void;
+let updater: () => void = () => undefined;
 let renderPromise: Promise<void> | undefined;
 let resolveRenderPromise: (() => void) | undefined;
 const renderDelay = 1000;

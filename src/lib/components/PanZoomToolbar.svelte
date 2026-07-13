@@ -3,9 +3,10 @@
   import { Button } from '$/components/ui/button';
   import { Separator } from '$/components/ui/separator';
   import type { PanZoomState } from '$/util/panZoom';
-  import { urls } from '$/util/state.svelte';
-  import ExpandIcon from '~icons/material-symbols/open-in-full-rounded';
+  import { canRedoEdit, canUndoEdit, redoLastEdit, undoLastEdit } from '$/util/state.svelte';
   import ArrowsToCircleIcon from '~icons/material-symbols/screenshot-frame-2';
+  import RedoIcon from '~icons/material-symbols/redo-rounded';
+  import UndoIcon from '~icons/material-symbols/undo-rounded';
   import MagnifyingGlassPlusIcon from '~icons/material-symbols/zoom-in';
   import MagnifyingGlassMinusIcon from '~icons/material-symbols/zoom-out';
 
@@ -13,22 +14,43 @@
 </script>
 
 <FloatingToolbar>
-  <Button variant="ghost" size="icon" title="Reset view" onclick={() => panZoomState.reset()}>
+  <Button
+    variant="ghost"
+    size="sm"
+    title="撤回上一步"
+    disabled={!canUndoEdit.current}
+    onclick={() => undoLastEdit()}>
+    <UndoIcon />
+    撤回
+  </Button>
+  <Button
+    variant="ghost"
+    size="sm"
+    title="恢复下一步"
+    disabled={!canRedoEdit.current}
+    onclick={() => redoLastEdit()}>
+    <RedoIcon />
+    恢复
+  </Button>
+  <Separator orientation="vertical" />
+  <Button variant="ghost" size="icon" title="重置视图" onclick={() => panZoomState.reset()}>
     <ArrowsToCircleIcon />
   </Button>
   <Separator orientation="vertical" />
   <Button
     variant="ghost"
     size="icon"
+    title="缩小"
     class="hidden sm:block"
     onclick={() => panZoomState.zoomOut()}>
     <MagnifyingGlassMinusIcon />
   </Button>
-  <Button variant="ghost" size="icon" class="hidden sm:block" onclick={() => panZoomState.zoomIn()}>
+  <Button
+    variant="ghost"
+    size="icon"
+    title="放大"
+    class="hidden sm:block"
+    onclick={() => panZoomState.zoomIn()}>
     <MagnifyingGlassPlusIcon />
-  </Button>
-  <Separator orientation="vertical" class="hidden sm:block" />
-  <Button variant="ghost" size="icon" title="Full Screen" href={urls.current.view} target="_blank">
-    <ExpandIcon />
   </Button>
 </FloatingToolbar>

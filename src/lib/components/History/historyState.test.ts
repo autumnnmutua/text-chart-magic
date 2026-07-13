@@ -35,7 +35,7 @@ beforeEach(() => {
 });
 
 describe('stateKey', () => {
-  it('ignores volatile and view-only fields, keying only on code + config', () => {
+  it('ignores volatile viewport fields', () => {
     const a = {
       ...defaultState,
       code: 'graph TD\n A-->B',
@@ -52,6 +52,16 @@ describe('stateKey', () => {
       updateDiagram: false
     };
     expect(stateKey(a)).toBe(stateKey(b));
+  });
+
+  it('tracks style and manually adjusted position changes', () => {
+    const base = codeState('graph TD\n A-->B');
+    expect(stateKey({ ...base, visualStyles: { A: { fill: '#f97316' } } })).not.toBe(
+      stateKey(base)
+    );
+    expect(stateKey({ ...base, visualPositions: { A: { x: 20, y: 10 } } })).not.toBe(
+      stateKey(base)
+    );
   });
 
   it('differs when code differs', () => {
@@ -101,6 +111,20 @@ describe('addManualEntry', () => {
     expect(addManualEntry(codeState('graph TD\n A-->B'))).toBe(true);
     expect(addManualEntry(codeState('graph TD\n A-->C'))).toBe(true);
     expect(entriesFor('manual')).toHaveLength(2);
+  });
+
+  it('adds a new entry when only color or position changes', () => {
+    const state = codeState('graph TD\n A-->B');
+    expect(addManualEntry(state)).toBe(true);
+    expect(addManualEntry({ ...state, visualStyles: { A: { fill: '#f97316' } } })).toBe(true);
+    expect(
+      addManualEntry({
+        ...state,
+        visualStyles: { A: { fill: '#f97316' } },
+        visualPositions: { A: { x: 12, y: 8 } }
+      })
+    ).toBe(true);
+    expect(entriesFor('manual')).toHaveLength(3);
   });
 
   it('generates an id and a name for each entry', () => {
@@ -224,6 +248,15 @@ describe('restoreEntries', () => {
     expect(entriesFor('manual')).toHaveLength(2);
   });
 
+  it('deduplicates repeated ids within the same uploaded file', () => {
+    const result = restoreEntries([
+      { id: 'same', name: 'first', state: defaultState, time: 10, type: 'manual' },
+      { id: 'same', name: 'second', state: defaultState, time: 20, type: 'manual' }
+    ]);
+    expect(result).toEqual({ restored: 1, invalid: 0, duplicates: 1 });
+    expect(entriesFor('manual')).toHaveLength(1);
+  });
+
   it('reports invalid entries and does not restore them', () => {
     const result = restoreEntries([
       { id: 'm1', name: 'm', state: defaultState, time: 20, type: 'manual' },
@@ -231,6 +264,22 @@ describe('restoreEntries', () => {
     ]);
     expect(result.restored).toBe(1);
     expect(result.invalid).toBe(1);
+  });
+
+  it('classifies loader and unknown entry types as invalid, not duplicates', () => {
+    const result = restoreEntries([
+      { id: 'loader', name: 'loader', state: defaultState, time: 1, type: 'loader' },
+      { id: 'unknown', state: defaultState, time: 2, type: 'other' } as unknown as HistoryEntry
+    ]);
+    expect(result).toEqual({ restored: 0, invalid: 2, duplicates: 0 });
+  });
+
+  it('assigns an id to a valid legacy entry that has none', () => {
+    const result = restoreEntries([
+      { name: 'legacy', state: defaultState, time: 1, type: 'manual' } as HistoryEntry
+    ]);
+    expect(result.restored).toBe(1);
+    expect(entriesFor('manual')[0].id).toBeTruthy();
   });
 
   it('sorts restored entries newest first', () => {
@@ -273,6 +322,31 @@ describe('injectHistoryIDs migration', () => {
     expect(auto).toHaveLength(1);
     expect(manual.every(({ id }) => id !== undefined)).toBe(true);
     expect(auto.every(({ id }) => id !== undefined)).toBe(true);
+  });
+
+  it('ignores a persisted non-array history payload', () => {
+    window.localStorage.setItem('manualHistoryStore', '{"unexpected":true}');
+    expect(() => injectHistoryIDs()).not.toThrow();
+    expect(entriesFor('manual')).toEqual([]);
+  });
+
+  it('normalizes valid legacy rows and removes corrupt rows inside an array', () => {
+    window.localStorage.setItem(
+      'manualHistoryStore',
+      JSON.stringify([
+        { state: { code: 'graph TD\n A-->B' }, time: 1 },
+        null,
+        { state: null, time: 2, type: 'manual' },
+        { state: { code: 42 }, time: 3, type: 'manual' }
+      ])
+    );
+    expect(() => injectHistoryIDs()).not.toThrow();
+    const entries = entriesFor('manual');
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ name: '历史记录', time: 1, type: 'manual' });
+    expect(entries[0].id).toBeTruthy();
+    expect(entries[0].state.code).toBe('graph TD\n A-->B');
+    expect(entries[0].state.mermaid).toBe(defaultState.mermaid);
   });
 });
 

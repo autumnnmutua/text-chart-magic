@@ -5,34 +5,36 @@ import panzoom from 'svg-pan-zoom';
 type PanZoom = typeof panzoom;
 
 export class PanZoomState {
+  private diagramView?: SVGElement;
   private pan?: Point;
   private zoom?: number;
   private pzoom: PanZoom | undefined;
   private isDirty = false;
+  private isInteractionSuspended = false;
   private resizeObserver: ResizeObserver;
 
-  public isPanEnabled: boolean;
   public onPanZoomChange?: (pan: Point, zoom: number) => void;
 
   constructor() {
-    this.isPanEnabled = true;
     this.resizeObserver = new ResizeObserver(() => {
       this.resize();
-      if (!this.isDirty) {
-        this.reset();
-      }
     });
   }
 
   public updateElement(diagramView: SVGElement, { pan, zoom }: Pick<State, 'pan' | 'zoom'>) {
+    this.resizeObserver.disconnect();
     this.pzoom?.destroy();
+    this.pzoom = undefined;
+    this.diagramView = diagramView;
+    this.isDirty = false;
     let hammer: HammerManager | undefined;
+    let preventTouchMove: ((event: TouchEvent) => void) | undefined;
     this.pzoom = panzoom(diagramView, {
       center: true,
       controlIconsEnabled: false,
       customEventsHandler: {
         haltEventListeners: ['touchstart', 'touchend', 'touchmove', 'touchleave', 'touchcancel'],
-        init: function (options) {
+        init: (options) => {
           const instance = options.instance;
           let initialScale = 1;
           let pannedX = 0;
@@ -44,19 +46,21 @@ export class PanZoomState {
             pannedY = 0;
           };
           const handlePan = (event: HammerInput) => {
+            if (this.isInteractionSuspended) return;
             instance.panBy({ x: event.deltaX - pannedX, y: event.deltaY - pannedY });
             pannedX = event.deltaX;
             pannedY = event.deltaY;
           };
 
           hammer.get('pinch').set({ enable: true });
-          hammer.on('panstart panmove', function (event) {
+          hammer.on('panstart panmove', (event) => {
             if (event.type === 'panstart') {
               resetPanned();
             }
             handlePan(event);
           });
-          hammer.on('pinchstart pinchmove', function (event) {
+          hammer.on('pinchstart pinchmove', (event) => {
+            if (this.isInteractionSuspended) return;
             if (event.type === 'pinchstart') {
               initialScale = instance.getZoom();
               resetPanned();
@@ -67,17 +71,22 @@ export class PanZoomState {
             });
             handlePan(event);
           });
-          options.svgElement.addEventListener('touchmove', function (event) {
+          preventTouchMove = (event: TouchEvent) => {
             event.preventDefault();
-          });
+          };
+          options.svgElement.addEventListener('touchmove', preventTouchMove, { passive: false });
         },
-        destroy: function () {
+        destroy: () => {
           hammer?.destroy();
+          if (preventTouchMove) {
+            diagramView.removeEventListener('touchmove', preventTouchMove);
+            preventTouchMove = undefined;
+          }
         }
       },
       fit: true,
       maxZoom: 12,
-      minZoom: 0.2,
+      minZoom: 0.05,
       onPan: (pan) => {
         this.pan = pan;
         this.zoom = this.pzoom?.getZoom();
@@ -100,7 +109,6 @@ export class PanZoomState {
 
     this.pzoom.disableDblClickZoom();
 
-    this.resizeObserver.disconnect();
     this.resizeObserver.observe(diagramView);
 
     if (pan && zoom && Number.isFinite(zoom) && Number.isFinite(pan.x) && Number.isFinite(pan.y)) {
@@ -109,18 +117,12 @@ export class PanZoomState {
       this.reset();
     }
 
-    // we start out with both pan and zoom enabled so that the tool can auto position view refreshed
-    // then set enable/disable pan based on state
-    if (this.isPanEnabled) {
+    if (this.isInteractionSuspended) {
+      this.pzoom.disablePan();
+      this.pzoom.disableZoom();
+    } else {
       this.pzoom.enablePan();
       this.pzoom.enableZoom();
-    } else {
-      this.pzoom.disableZoom();
-      this.pzoom.disablePan();
-    }
-
-    if (pan === undefined && zoom === undefined) {
-      this.reset();
     }
   }
 
@@ -134,9 +136,11 @@ export class PanZoomState {
   }
 
   public resize() {
-    this.pzoom?.resize();
+    if (!this.pzoom || !this.hasRenderableBounds()) return;
     if (!this.isDirty) {
       this.reset();
+    } else {
+      this.pzoom.resize();
     }
   }
 
@@ -148,10 +152,59 @@ export class PanZoomState {
     this.pzoom?.zoomOut();
   }
 
+  public suspendInteraction() {
+    this.isInteractionSuspended = true;
+    this.pzoom?.disablePan();
+    this.pzoom?.disableZoom();
+  }
+
+  public resumeInteraction() {
+    this.isInteractionSuspended = false;
+    this.pzoom?.enablePan();
+    this.pzoom?.enableZoom();
+  }
+
   public reset() {
-    this.pzoom?.reset();
-    // Zoom out a bit to avoid overlap with the toolbar
-    this.pzoom?.zoom(0.875);
+    const pzoom = this.pzoom;
+    if (!pzoom || !this.hasRenderableBounds()) {
+      this.isDirty = false;
+      return;
+    }
+    pzoom.resize();
+    pzoom.fit();
+    pzoom.center();
+    const fittedZoom = pzoom.getZoom();
+    if (!Number.isFinite(fittedZoom) || fittedZoom <= 0) {
+      this.isDirty = false;
+      return;
+    }
+    pzoom.zoom(Math.max(fittedZoom * 0.92, 0.05));
+    pzoom.center();
     this.isDirty = false;
+  }
+
+  public destroy() {
+    this.resizeObserver.disconnect();
+    this.pzoom?.destroy();
+    this.pzoom = undefined;
+    this.diagramView = undefined;
+    this.onPanZoomChange = undefined;
+    this.pan = undefined;
+    this.zoom = undefined;
+    this.isDirty = false;
+    this.isInteractionSuspended = false;
+  }
+
+  private hasRenderableBounds(): boolean {
+    const view = this.diagramView;
+    if (!view?.isConnected) return false;
+    const viewport = view.getBoundingClientRect();
+    if (viewport.width <= 0 || viewport.height <= 0) return false;
+    try {
+      const content = (view as SVGGraphicsElement).getBBox();
+      return content.width > 0 && content.height > 0;
+    } catch {
+      return false;
+    }
   }
 }

@@ -8,6 +8,107 @@ import mermaid from 'mermaid';
 mermaid.registerLayoutLoaders([...elkLayouts, ...tidyTreeLayouts]);
 const init = mermaid.registerExternalDiagrams([zenuml]);
 
+const prepareArchitectureCode = (source: string) => {
+  const labels = new Map<string, string>();
+  if (!/^\s*architecture-beta\b/im.test(source)) return { code: source, labels };
+  let index = 0;
+  const code = source.replace(
+    /^(\s*(?:group|service)\s+[^\n]+?\[)([^\]\n]+)(\])/gim,
+    (_line, prefix: string, label: string, suffix: string) => {
+      if (/^[\x20-\x7E]+$/.test(label)) return `${prefix}${label}${suffix}`;
+      const token = `ARCH_LABEL_${index++}`;
+      labels.set(token, label.replace(/^"|"$/g, ''));
+      return `${prefix}${token}${suffix}`;
+    }
+  );
+  return { code, labels };
+};
+
+const prepareWardleyCode = (source: string) => {
+  const labels = new Map<string, string>();
+  if (!/^\s*wardley-beta\b/im.test(source)) return { code: source, labels };
+  const componentLabels = [
+    ...new Set(
+      [...source.matchAll(/^\s*(?:anchor|component)\s+(.+?)\s+\[/gim)]
+        .map((match) => match[1].trim())
+        .filter((label) => !/^[\x20-\x7E]+$/.test(label))
+    )
+  ].sort((left, right) => right.length - left.length);
+  let code = source;
+  for (const [index, label] of componentLabels.entries()) {
+    const token = `WARDLEY_COMPONENT_${index}`;
+    labels.set(token, label);
+    code = code.replaceAll(label, token);
+  }
+  return { code, labels };
+};
+
+const prepareSankeyCode = (source: string) => {
+  const labels = new Map<string, string>();
+  if (!/^\s*sankey-beta\b/im.test(source)) return { code: source, labels };
+  const tokens = new Map<string, string>();
+  const decodeField = (field: string) => {
+    const value = field.trim();
+    return value.startsWith('"') && value.endsWith('"')
+      ? value.slice(1, -1).replaceAll('""', '"')
+      : value;
+  };
+  const safeField = (field: string) => {
+    const label = decodeField(field);
+    if (/^[\x20-\x7E]+$/.test(label)) return field;
+    let token = tokens.get(label);
+    if (!token) {
+      token = `SANKEY_LABEL_${tokens.size}`;
+      tokens.set(label, token);
+      labels.set(token, label);
+    }
+    return token;
+  };
+  const rowPattern =
+    /^(\s*)("(?:[^"]|"")*"|[^,]*),("(?:[^"]|"")*"|[^,]*),(\s*-?(?:\d+(?:\.\d*)?|\.\d+)\s*)$/;
+  const code = source
+    .split('\n')
+    .map((line) => {
+      const match = line.match(rowPattern);
+      return match ? `${match[1]}${safeField(match[2])},${safeField(match[3])},${match[4]}` : line;
+    })
+    .join('\n');
+  return { code, labels };
+};
+
+const prepareDiagramCode = (source: string) => {
+  const architecture = prepareArchitectureCode(source);
+  const wardley = prepareWardleyCode(architecture.code);
+  const sankey = prepareSankeyCode(wardley.code);
+  return {
+    code: sankey.code,
+    labels: new Map([...architecture.labels, ...wardley.labels, ...sankey.labels])
+  };
+};
+
+const restorePreparedLabels = (svg: string, labels: Map<string, string>): string => {
+  const escapeMarkup = (value: string) =>
+    value.replace(/[&<>"']/g, (character) => {
+      switch (character) {
+        case '&':
+          return '&amp;';
+        case '"':
+          return '&quot;';
+        case "'":
+          return '&#39;';
+        case '<':
+          return '&lt;';
+        case '>':
+          return '&gt;';
+        default:
+          return character;
+      }
+    });
+  let restored = svg;
+  for (const [token, label] of labels) restored = restored.replaceAll(token, escapeMarkup(label));
+  return restored;
+};
+
 export const render = async (
   config: MermaidConfig,
   code: string,
@@ -17,11 +118,17 @@ export const render = async (
 
   // Should be able to call this multiple times without any issues.
   mermaid.initialize(config);
-  return await mermaid.render(id, code);
+  const prepared = prepareDiagramCode(code);
+  const result = await mermaid.render(id, prepared.code);
+  return {
+    ...result,
+    svg: restorePreparedLabels(result.svg, prepared.labels)
+  };
 };
 
 export const parse = async (code: string) => {
-  return await mermaid.parse(code);
+  await init;
+  return await mermaid.parse(prepareDiagramCode(code).code);
 };
 
 /**

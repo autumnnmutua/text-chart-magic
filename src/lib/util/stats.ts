@@ -12,7 +12,7 @@ export const initAnalytics = async (): Promise<void> => {
   try {
     const { default: Plausible } = await import('plausible-tracker');
     plausible = Plausible({
-      // All tracked stats are public and available at https://p.mermaid.live/mermaid.live
+      // Analytics is disabled unless a deployment explicitly provides its own endpoint.
       apiHost: env.analyticsUrl,
       domain: env.domain,
       hashMode: false
@@ -86,24 +86,15 @@ const minutesToMilliSeconds = (minutes: number): number => {
   return minutes * 60_000;
 };
 
-const noDelay = 0;
 const defaultDelay = minutesToMilliSeconds(1);
 const delaysPerEvent = {
-  bannerClick: noDelay,
-  chooseEditor: noDelay,
-  copyClipboard: defaultDelay,
-  copyMarkdown: defaultDelay,
   download: defaultDelay,
   history: defaultDelay,
-  loadGist: defaultDelay,
   loadSampleDiagram: defaultDelay,
-  mermaidChartClick: noDelay,
   migration: defaultDelay,
   mobileViewToggle: defaultDelay,
   pwaInstalled: defaultDelay,
   render: minutesToMilliSeconds(5),
-  renderDiagram: defaultDelay,
-  themeChange: defaultDelay,
   version: defaultDelay
 } as const;
 export type AnalyticsEvent = keyof typeof delaysPerEvent;
@@ -129,8 +120,4 @@ export const logEvent = (
     key,
     window.setTimeout(() => timeouts.delete(key), delaysPerEvent[name])
   );
-};
-
-export const logMermaidChartClick = (source: string): void => {
-  logEvent('mermaidChartClick', { source });
 };
