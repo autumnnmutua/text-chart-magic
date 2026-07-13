@@ -1,4 +1,11 @@
-import type { ErrorHash, MarkerData, State, ValidatedState } from '$/types';
+import type {
+  ErrorHash,
+  MarkerData,
+  State,
+  ValidatedState,
+  VisualLayerState,
+  VisualStyle
+} from '$/types';
 import { replaceState as replaceNavigationState } from '$app/navigation';
 import { get as lodashGet } from 'lodash-es';
 import type { MermaidConfig } from 'mermaid';
@@ -23,7 +30,13 @@ import { diagramStateKey } from './diagramStateKey';
 import { notify } from './notify';
 import { readJSON, writeJSON } from './persist.svelte';
 import { deserializeState, serializeState } from './serde';
-import { removeDiagramElementCode, type VisualTextTarget } from './visualTextEdit';
+import {
+  removeDiagramElementCode,
+  replaceDiagramVisualText,
+  replaceVisualText,
+  type SourceTextRange,
+  type VisualTextTarget
+} from './visualTextEdit';
 
 const formatJSON = (data: unknown): string => JSON.stringify(data, undefined, 2);
 
@@ -77,6 +90,7 @@ export const defaultState: State = {
   }),
   panZoom: true,
   rough: false,
+  snapToGrid: true,
   updateDiagram: true
 };
 
@@ -131,6 +145,23 @@ const normalizeVisualStyles = (value: unknown): State['visualStyles'] => {
   return Object.keys(styles).length > 0 ? styles : undefined;
 };
 
+const normalizeVisualLayers = (value: unknown): State['visualLayers'] => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const layers: NonNullable<State['visualLayers']> = {};
+  for (const [id, rawLayer] of Object.entries(value)) {
+    if (!id || !rawLayer || typeof rawLayer !== 'object' || Array.isArray(rawLayer)) continue;
+    const candidate = rawLayer as Record<string, unknown>;
+    const layer: VisualLayerState = {};
+    if (typeof candidate.hidden === 'boolean') layer.hidden = candidate.hidden;
+    if (typeof candidate.locked === 'boolean') layer.locked = candidate.locked;
+    if (typeof candidate.zIndex === 'number' && Number.isFinite(candidate.zIndex)) {
+      layer.zIndex = Math.trunc(candidate.zIndex);
+    }
+    if (Object.keys(layer).length > 0) layers[id] = layer;
+  }
+  return Object.keys(layers).length > 0 ? layers : undefined;
+};
+
 /**
  * Fills fields that did not exist in older saved links or localStorage data.
  * Unknown optional fields are retained so newer data can still round-trip.
@@ -151,6 +182,7 @@ export const normalizeState = (value: unknown): State => {
   };
 
   normalized.grid = typeof candidate.grid === 'boolean' ? candidate.grid : defaultState.grid;
+  normalized.snapToGrid = typeof candidate.snapToGrid === 'boolean' ? candidate.snapToGrid : true;
   normalized.panZoom =
     typeof candidate.panZoom === 'boolean' ? candidate.panZoom : defaultState.panZoom;
   normalized.editorMode = candidate.editorMode === 'config' ? 'config' : 'code';
@@ -161,8 +193,10 @@ export const normalizeState = (value: unknown): State => {
   }
   normalized.visualPositions = normalizeVisualPositions(candidate.visualPositions);
   normalized.visualStyles = normalizeVisualStyles(candidate.visualStyles);
+  normalized.visualLayers = normalizeVisualLayers(candidate.visualLayers);
   if (!normalized.visualPositions) delete normalized.visualPositions;
   if (!normalized.visualStyles) delete normalized.visualStyles;
+  if (!normalized.visualLayers) delete normalized.visualLayers;
   return normalized;
 };
 
@@ -225,6 +259,8 @@ let currentDiagramInitialState: State | undefined = storedDiagramInitial?.state;
 let currentDiagramInitialType = storedDiagramInitial?.diagramType ?? '';
 let captureNextValidAsInitial = !storedDiagramInitial;
 let processRevision = 0;
+let invalidRollbackTimer: ReturnType<typeof setTimeout> | undefined;
+const INVALID_ROLLBACK_DELAY_MS = 1200;
 
 const processState = async (state: State) => {
   const processed = validatedStateOf(state, '');
@@ -285,12 +321,22 @@ let updateHash: ((serialized: string) => void) | undefined;
 // initURLSubscription has run). Only called from update(), which suppresses
 // dependency tracking.
 const processSnapshot = (snapshot: State): void => {
+  if (invalidRollbackTimer) clearTimeout(invalidRollbackTimer);
+  invalidRollbackTimer = undefined;
   const revision = ++processRevision;
   void processState(snapshot).then((processed) => {
     if (revision !== processRevision) return;
-    if (processed.error && shouldRollbackInvalidState(snapshot)) {
-      restoreLastValidState();
-      return;
+    if (processed.error) {
+      if (shouldRollbackInvalidState(snapshot)) {
+        restoreLastValidState();
+        return;
+      }
+      if (lastValidState && snapshot.code !== lastValidState.code) {
+        invalidRollbackTimer = setTimeout(() => {
+          invalidRollbackTimer = undefined;
+          if (input.code === snapshot.code) restoreLastValidState();
+        }, INVALID_ROLLBACK_DELAY_MS);
+      }
     }
     validatedCurrent = processed;
     updateHash?.(processed.serialized);
@@ -443,6 +489,8 @@ const undoableStoreKeys = [
   'mermaid',
   'grid',
   'rough',
+  'snapToGrid',
+  'visualLayers',
   'visualStyles',
   'visualPositions'
 ] satisfies (keyof State)[];
@@ -532,6 +580,12 @@ export const updateCode = (
     if (state.code !== code) {
       pushUndoFor(state, 'code', { coalesce: true });
     }
+    const currentDiagramType = getDiagramKeyword(state.code);
+    const nextDiagramType = getDiagramKeyword(code);
+    if (currentDiagramType && nextDiagramType && currentDiagramType !== nextDiagramType) {
+      delete state.pan;
+      delete state.zoom;
+    }
     state.code = code;
     state.updateDiagram = updateDiagram;
   });
@@ -569,11 +623,14 @@ const pushUndoFor = (
   source:
     | 'branch'
     | 'arrow'
+    | 'batch'
     | 'code'
     | 'color'
     | 'config'
     | 'delete'
     | 'interaction'
+    | 'layer'
+    | 'replace'
     | 'reset'
     | 'resize'
     | 'sort'
@@ -655,36 +712,69 @@ export const addDiagramBranch = ({
   return didAdd;
 };
 
-export const deleteDiagramElement = (target: VisualTextTarget): boolean => {
-  let didDelete = false;
-  update((state) => {
-    const nextCode = removeDiagramElementCode(state.code, target);
-    if (nextCode === undefined || nextCode === state.code) return;
-    pushUndoFor(state, 'delete');
-    state.code = nextCode;
-    if (target.styleId && state.visualStyles?.[target.styleId]) {
-      const remainingStyles = Object.fromEntries(
-        Object.entries(state.visualStyles).filter(([styleId]) => styleId !== target.styleId)
-      );
-      if (Object.keys(remainingStyles).length > 0) state.visualStyles = remainingStyles;
-      else delete state.visualStyles;
-    }
-    if (state.visualPositions) {
-      const remainingPositions = Object.fromEntries(
-        Object.entries(state.visualPositions).filter(([id]) =>
+const cleanVisualMetadata = (
+  state: State,
+  nextCode: string,
+  removedIds: readonly string[]
+): void => {
+  if (state.visualStyles) {
+    const remainingStyles = Object.fromEntries(
+      Object.entries(state.visualStyles).filter(([id]) => !removedIds.includes(id))
+    );
+    if (Object.keys(remainingStyles).length > 0) state.visualStyles = remainingStyles;
+    else delete state.visualStyles;
+  }
+  if (state.visualLayers) {
+    const remainingLayers = Object.fromEntries(
+      Object.entries(state.visualLayers).filter(([id]) => !removedIds.includes(id))
+    );
+    if (Object.keys(remainingLayers).length > 0) state.visualLayers = remainingLayers;
+    else delete state.visualLayers;
+  }
+  if (state.visualPositions) {
+    const remainingPositions = Object.fromEntries(
+      Object.entries(state.visualPositions).filter(
+        ([id]) =>
+          !removedIds.includes(id) &&
           new RegExp(
             String.raw`(^|[^A-Za-z0-9_-])${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?=[^A-Za-z0-9_-]|$)`
           ).test(nextCode)
-        )
-      );
-      if (Object.keys(remainingPositions).length > 0) state.visualPositions = remainingPositions;
-      else delete state.visualPositions;
+      )
+    );
+    if (Object.keys(remainingPositions).length > 0) state.visualPositions = remainingPositions;
+    else delete state.visualPositions;
+  }
+};
+
+export const deleteDiagramElements = (targets: readonly VisualTextTarget[]): number => {
+  let deletedCount = 0;
+  update((state) => {
+    let nextCode = state.code;
+    const removedIds: string[] = [];
+    const orderedTargets = [...targets].sort(
+      (left, right) => (right.occurrence ?? 0) - (left.occurrence ?? 0)
+    );
+    for (const target of orderedTargets) {
+      const candidate = removeDiagramElementCode(nextCode, target);
+      if (candidate === undefined || candidate === nextCode) continue;
+      nextCode = candidate;
+      deletedCount += 1;
+      if (target.styleId && !removedIds.includes(target.styleId)) removedIds.push(target.styleId);
+      if (target.sourceId && !removedIds.includes(target.sourceId))
+        removedIds.push(target.sourceId);
     }
+    if (deletedCount === 0) return;
+    pushUndoFor(state, targets.length > 1 ? 'batch' : 'delete');
+    state.code = nextCode;
+    cleanVisualMetadata(state, nextCode, removedIds);
     state.updateDiagram = true;
-    didDelete = true;
   });
-  if (!didDelete) notify('没有找到可删除的数据，请重新选择图表元素后再试。');
-  return didDelete;
+  if (deletedCount === 0) notify('没有找到可删除的数据，请重新选择图表元素后再试。');
+  return deletedCount;
+};
+
+export const deleteDiagramElement = (target: VisualTextTarget): boolean => {
+  return deleteDiagramElements([target]) > 0;
 };
 
 export const addBlockArrow = (sourceLabel: string, targetLabel: string): boolean => {
@@ -755,6 +845,68 @@ export const updateVisualPositions = (visualPositions: State['visualPositions'])
   });
 };
 
+export const updateVisualPositionsBatch = (
+  updates: Record<string, NonNullable<State['visualPositions']>[string]>
+): boolean => {
+  let changed = false;
+  update((state) => {
+    const next = normalizeVisualPositions({ ...(state.visualPositions ?? {}), ...updates });
+    if (JSON.stringify(state.visualPositions ?? {}) === JSON.stringify(next ?? {})) return;
+    pushUndoFor(state, 'batch');
+    if (next) state.visualPositions = next;
+    else delete state.visualPositions;
+    state.updateDiagram = true;
+    changed = true;
+  });
+  return changed;
+};
+
+export const replaceDiagramText = (
+  range: SourceTextRange,
+  currentText: string,
+  nextText: string
+): boolean => {
+  let changed = false;
+  update((state) => {
+    const next = replaceDiagramVisualText(state.code, range, currentText, nextText);
+    if (next.code === state.code) return;
+    pushUndoFor(state, 'replace');
+    state.code = next.code;
+    state.updateDiagram = true;
+    changed = true;
+  });
+  return changed;
+};
+
+export interface DiagramTextReplacement {
+  currentText: string;
+  nextText: string;
+  range: SourceTextRange;
+}
+
+export const replaceAllDiagramText = (replacements: readonly DiagramTextReplacement[]): number => {
+  let replaced = 0;
+  update((state) => {
+    let nextCode = state.code;
+    for (const replacement of [...replacements].sort(
+      (left, right) => right.range.start - left.range.start
+    )) {
+      if (
+        nextCode.slice(replacement.range.start, replacement.range.end) !== replacement.currentText
+      ) {
+        continue;
+      }
+      nextCode = replaceVisualText(nextCode, replacement.range, replacement.nextText).code;
+      replaced += 1;
+    }
+    if (nextCode === state.code) return;
+    pushUndoFor(state, 'replace');
+    state.code = nextCode;
+    state.updateDiagram = true;
+  });
+  return replaced;
+};
+
 export const undoLastEdit = (): boolean => {
   const previous = undoStack.pop();
   if (!previous) {
@@ -810,6 +962,7 @@ export const loadDiagramCode = (code: string): void => {
     state.zoom = undefined;
     delete state.visualStyles;
     delete state.visualPositions;
+    delete state.visualLayers;
     state.updateDiagram = true;
   });
 };
@@ -818,15 +971,67 @@ export const updateVisualStyle = (
   targetId: string,
   style: NonNullable<State['visualStyles']>[string]
 ): void => {
+  updateVisualStyles([targetId], style);
+};
+
+export const updateVisualStyles = (targetIds: readonly string[], style: VisualStyle): boolean => {
+  const ids = targetIds.filter((id, index) => Boolean(id) && targetIds.indexOf(id) === index);
+  if (ids.length === 0) return false;
+  let changed = false;
   update((state) => {
-    if (JSON.stringify(state.visualStyles?.[targetId] ?? {}) === JSON.stringify(style)) return;
+    const next = { ...(state.visualStyles ?? {}) };
+    for (const id of ids) {
+      if (JSON.stringify(next[id] ?? {}) === JSON.stringify(style)) continue;
+      next[id] = { ...style };
+      changed = true;
+    }
+    if (!changed) return;
     pushUndoFor(state, 'color', { coalesce: true });
-    state.visualStyles = {
-      ...(state.visualStyles ?? {}),
-      [targetId]: style
-    };
+    state.visualStyles = next;
     state.updateDiagram = true;
   });
+  return changed;
+};
+
+export const updateVisualLayers = (
+  patches: Readonly<Record<string, VisualLayerState>>
+): boolean => {
+  const entries = Object.entries(patches).filter(([id]) => Boolean(id));
+  if (entries.length === 0) return false;
+  let changed = false;
+  update((state) => {
+    let next = { ...(state.visualLayers ?? {}) };
+    for (const [id, patch] of entries) {
+      const current = next[id] ?? {};
+      const merged = { ...current, ...patch };
+      const candidate: VisualLayerState = {};
+      if (merged.hidden) candidate.hidden = true;
+      if (merged.locked) candidate.locked = true;
+      if (merged.zIndex) candidate.zIndex = merged.zIndex;
+      if (JSON.stringify(current) === JSON.stringify(candidate)) continue;
+      if (Object.keys(candidate).length > 0) next[id] = candidate;
+      else next = Object.fromEntries(Object.entries(next).filter(([key]) => key !== id));
+      changed = true;
+    }
+    if (!changed) return;
+    pushUndoFor(state, 'layer');
+    if (Object.keys(next).length > 0) state.visualLayers = next;
+    else delete state.visualLayers;
+    state.updateDiagram = true;
+  });
+  return changed;
+};
+
+export const updateVisualLayer = (
+  targetIds: readonly string[],
+  patch: VisualLayerState
+): boolean => {
+  const ids = targetIds.filter((id, index) => Boolean(id) && targetIds.indexOf(id) === index);
+  return updateVisualLayers(Object.fromEntries(ids.map((id) => [id, patch])));
+};
+
+export const setSnapToGrid = (enabled: boolean): void => {
+  updateCodeStore({ snapToGrid: enabled });
 };
 
 export const updateConfig = (config: string): void => {

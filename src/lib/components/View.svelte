@@ -11,7 +11,7 @@
     resizePacketField,
     updateCodeInteraction,
     updateCodeStore,
-    updateVisualPositions,
+    updateVisualPositionsBatch,
     validatedState
   } from '$/util/state.svelte';
   import { saveStatistics } from '$/util/stats';
@@ -41,8 +41,25 @@
   import {
     clearVisualSelection,
     openVisualColorPanel,
-    selectVisualElement
+    selectVisualElement,
+    setVisualSelection,
+    visualSelection,
+    type VisualSelectionItem
   } from '$lib/util/visualSelection.svelte';
+  import {
+    clearVisualDocument,
+    setVisualDocument,
+    visualDocument
+  } from '$lib/util/visualDocument.svelte';
+  import {
+    applyVisualLayerState,
+    applyVisualSelectionState,
+    buildVisualDocument,
+    getVisualDocumentTarget,
+    getVisualSourceId
+  } from '$lib/util/visualElementModel';
+  import { deleteSelectedElements } from '$lib/util/visualOperations';
+  import { calculateSnap, type ClientBounds, type SnapGuide } from '$lib/util/snapLayout';
   import {
     findVisualTextRange,
     findRequirementFieldRange,
@@ -72,6 +89,7 @@
   let rough: boolean;
   let visualStylesFingerprint = '';
   let visualPositionsFingerprint = '';
+  let visualLayersFingerprint = '';
   let view: HTMLDivElement | undefined = $state();
   let error = $state(false);
   let panZoom = true;
@@ -157,10 +175,13 @@
     | undefined = $state();
   let blockDrag:
     | {
-        current: VisualPosition;
+        current: Record<string, VisualPosition>;
         id: string;
-        initial: VisualPosition;
+        initial: Record<string, VisualPosition>;
+        initialBounds: ClientBounds;
         kind: 'architecture' | 'block' | 'c4';
+        otherBounds: ClientBounds[];
+        pointerClientStart: VisualPosition;
         pointerId?: number;
         pointerStart: VisualPosition;
         started: boolean;
@@ -168,7 +189,21 @@
       }
     | undefined = $state();
   let blockArrowSourceLabel = $state('');
+  let marquee:
+    | {
+        additive: VisualSelectionItem[];
+        currentX: number;
+        currentY: number;
+        pointerId?: number;
+        startX: number;
+        startY: number;
+        started: boolean;
+      }
+    | undefined = $state();
+  let snapGuides = $state<SnapGuide[]>([]);
   let suppressVisualClickUntil = 0;
+  let handledFocusRequestId = 0;
+  let handledEditRequestId = 0;
   let pendingPanZoom: Pick<State, 'pan' | 'zoom'> | undefined;
   let panZoomPersistTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -182,8 +217,12 @@
 
   // Set up panZoom state observer to update the store when pan/zoom changes
   const setupPanZoomObserver = () => {
-    panZoomState.onPanZoomChange = (pan, zoom) => {
+    panZoomState.onPanZoomChange = (pan, zoom, immediate = false) => {
       pendingPanZoom = { pan, zoom };
+      if (immediate) {
+        flushPanZoom();
+        return;
+      }
       if (panZoomPersistTimer) clearTimeout(panZoomPersistTimer);
       panZoomPersistTimer = setTimeout(flushPanZoom, 100);
     };
@@ -199,12 +238,27 @@
 
   const releaseCanvasBounds = (graphDiv: SVGSVGElement) => {
     const viewBox = graphDiv.viewBox?.baseVal;
-    if (viewBox && viewBox.width > 0 && viewBox.height > 0) {
-      graphDiv.setAttribute('width', `${Math.ceil(viewBox.width)}px`);
-      graphDiv.setAttribute('height', `${Math.ceil(viewBox.height)}px`);
+    if (!viewBox || viewBox.width <= 0 || viewBox.height <= 0) {
+      try {
+        const bounds = graphDiv.getBBox();
+        if (bounds.width > 0 && bounds.height > 0) {
+          const padding = 10;
+          graphDiv.setAttribute(
+            'viewBox',
+            `${bounds.x - padding} ${bounds.y - padding} ${bounds.width + padding * 2} ${bounds.height + padding * 2}`
+          );
+        }
+      } catch {
+        // Some SVG renderers expose their bounds only after the element is mounted.
+      }
     }
+    graphDiv.setAttribute('width', '100%');
+    graphDiv.setAttribute('height', '100%');
+    graphDiv.style.display = 'block';
+    graphDiv.style.width = '100%';
+    graphDiv.style.height = '100%';
     graphDiv.style.maxWidth = 'none';
-    graphDiv.style.overflow = 'visible';
+    graphDiv.style.overflow = 'hidden';
   };
 
   const rgbaFromHex = (hex: string, alpha = 1): string => {
@@ -311,6 +365,17 @@
     }
   };
 
+  const refreshVisualDocument = (graphDiv: SVGSVGElement, state: State) => {
+    const items = buildVisualDocument(graphDiv, state.code);
+    applyVisualLayerState(items, state.visualLayers);
+    setVisualDocument(items);
+    if (visualSelection.count > 0) {
+      const selectedIds = new Set(visualSelection.ids);
+      setVisualSelection(items.filter(({ id }) => selectedIds.has(id)));
+    }
+    applyVisualSelectionState(items, new Set(visualSelection.ids), visualSelection.current?.id);
+  };
+
   const textLeafSelector = '.nodeLabel, .edgeLabel, .label, text, foreignObject p';
   const editableTextSelector = `${textLeafSelector}, tspan, foreignObject, .node, .actor, .messageText, .noteText, .loopText, .task, .journey-section, .legend, .face, .branchLabel`;
 
@@ -318,7 +383,11 @@
     if (!(target instanceof Element)) {
       return undefined;
     }
-    return target.closest(editableTextSelector) ?? undefined;
+    return (
+      target.closest(editableTextSelector) ??
+      target.querySelector(editableTextSelector) ??
+      undefined
+    );
   };
 
   const getTextLeafElement = (
@@ -429,23 +498,6 @@
       .filter((item) => normalizeVisibleText(item.textContent ?? '') === label).length;
   };
 
-  const getSourceId = (target: EventTarget | null): string => {
-    if (!(target instanceof Element)) {
-      return '';
-    }
-    const node = target.closest('.node');
-    const nodeId = node?.id ?? '';
-    return (
-      target.closest<SVGGElement>('g[data-c4-id]')?.dataset.c4Id ??
-      target.closest<SVGGElement>('g[data-architecture-id]')?.dataset.architectureId ??
-      nodeId.match(/-flowchart-([A-Za-z][A-Za-z0-9_]*)-\d+$/)?.[1] ??
-      nodeId.match(/-classId-(.+)-\d+$/)?.[1] ??
-      nodeId.match(/-(?:requirement|element)-([A-Za-z][\w-]*)-\d+$/i)?.[1] ??
-      node?.getAttribute('data-style-id') ??
-      nodeId
-    );
-  };
-
   const isFlowchartState = (): boolean =>
     /^\s*(flowchart|graph)\b/im.test(validatedState.current.code);
 
@@ -501,7 +553,6 @@
       x: Math.min(Math.max(event.clientX - rect.left + 12, 12), rect.width - 96),
       y: Math.min(Math.max(event.clientY - rect.top + 50, 12), rect.height - 48)
     };
-    selectVisualElement({ id: styleId, label: colorTarget.label });
   };
 
   const showDeleteButton = (
@@ -599,13 +650,22 @@
   const openColorPicker = (event: MouseEvent) => {
     event.stopPropagation();
     if (colorTarget) {
-      selectVisualElement({ id: colorTarget.id, label: colorTarget.label });
+      if (!visualSelection.ids.includes(colorTarget.id)) {
+        selectVisualElement({ id: colorTarget.id, label: colorTarget.label });
+      }
       openVisualColorPanel();
     }
   };
 
   const deleteSelection = (event: MouseEvent) => {
     event.stopPropagation();
+    if (visualSelection.count > 1) {
+      deleteSelectedElements();
+      branchTarget = undefined;
+      colorTarget = undefined;
+      deleteTarget = undefined;
+      return;
+    }
     if (!deleteTarget) {
       return;
     }
@@ -626,17 +686,21 @@
   const isPrimaryDragStart = (event: PointerEvent | MouseEvent): boolean =>
     event.button === 0 && (!('isPrimary' in event) || event.isPrimary);
 
+  const getMoodFaceTarget = (target: EventTarget | null): Element | undefined => {
+    if (!(target instanceof Element)) return undefined;
+    if (target.matches('.face')) return target;
+    const featureGroup = target.closest('g');
+    const face = featureGroup?.previousElementSibling;
+    return face?.matches('.face') ? face : undefined;
+  };
+
   const startMoodDrag = (event: PointerEvent | MouseEvent) => {
-    if (
-      !isPrimaryDragStart(event) ||
-      !isJourneyState() ||
-      event.target instanceof Element === false ||
-      !event.target.closest('.face')
-    ) {
+    const face = getMoodFaceTarget(event.target);
+    if (!isPrimaryDragStart(event) || !isJourneyState() || !face) {
       return;
     }
-    const text = getEditableLabel(event.target, event);
-    const occurrence = getTextOccurrence(event.target, text, event);
+    const text = getEditableLabel(face, event);
+    const occurrence = getTextOccurrence(face, text, event);
     const score = findJourneyScore(validatedState.current.code, text, occurrence);
     if (!text || score === undefined) {
       return;
@@ -799,6 +863,15 @@
 
   type FreeLayoutKind = NonNullable<typeof blockDrag>['kind'];
 
+  const clientBoundsOf = (elements: readonly Element[]): ClientBounds => {
+    const bounds = elements.map((element) => element.getBoundingClientRect());
+    const left = Math.min(...bounds.map((item) => item.left));
+    const right = Math.max(...bounds.map((item) => item.right));
+    const top = Math.min(...bounds.map((item) => item.top));
+    const bottom = Math.max(...bounds.map((item) => item.bottom));
+    return { bottom, height: bottom - top, left, right, top, width: right - left };
+  };
+
   const startFreeLayoutDrag = (
     event: PointerEvent | MouseEvent,
     kind: FreeLayoutKind,
@@ -809,7 +882,37 @@
     const svg = container?.querySelector<SVGSVGElement>('svg');
     const pointerStart = svg ? clientToSvgPoint(svg, event.clientX, event.clientY) : undefined;
     if (!id || !svg || !pointerStart) return;
-    const initial = validatedState.current.visualPositions?.[id] ?? { x: 0, y: 0 };
+    if (validatedState.current.visualLayers?.[id]?.locked) return;
+    const documentItem = getVisualDocumentTarget(event.target, visualDocument.current);
+    if (documentItem && !visualSelection.ids.includes(id)) {
+      selectVisualElement(documentItem, {
+        additive: event.shiftKey || event.ctrlKey || event.metaKey
+      });
+    }
+    const selectedIds = new Set(visualSelection.ids.includes(id) ? visualSelection.ids : [id]);
+    const group = visualDocument.current.filter(
+      (item) =>
+        selectedIds.has(item.id) &&
+        item.layoutKind === kind &&
+        !validatedState.current.visualLayers?.[item.id]?.locked
+    );
+    const movableItems = group.length > 0 ? group : documentItem ? [documentItem] : [];
+    if (movableItems.length === 0) return;
+    const initial = Object.fromEntries(
+      movableItems.map((item) => [
+        item.id,
+        validatedState.current.visualPositions?.[item.id] ?? { x: 0, y: 0 }
+      ])
+    );
+    const initialBounds = clientBoundsOf(movableItems.map(({ element }) => element));
+    const otherBounds = visualDocument.current
+      .filter(
+        (item) =>
+          item.layoutKind === kind &&
+          !selectedIds.has(item.id) &&
+          !validatedState.current.visualLayers?.[item.id]?.hidden
+      )
+      .map(({ element }) => clientBoundsOf([element]));
     // Claim module gestures before svg-pan-zoom can interpret them as canvas panning.
     event.stopPropagation();
     panZoomState.suspendInteraction();
@@ -818,7 +921,10 @@
       current: initial,
       id,
       initial,
+      initialBounds,
       kind,
+      otherBounds,
+      pointerClientStart: { x: event.clientX, y: event.clientY },
       pointerId,
       pointerStart,
       started: false,
@@ -857,7 +963,25 @@
 
   const updateBlockDrag = (event: PointerEvent | MouseEvent) => {
     if (!blockDrag || event.buttons !== 1) return;
-    const point = clientToSvgPoint(blockDrag.svg, event.clientX, event.clientY);
+    const rawClientDelta = {
+      x: event.clientX - blockDrag.pointerClientStart.x,
+      y: event.clientY - blockDrag.pointerClientStart.y
+    };
+    const viewBounds = view?.getBoundingClientRect();
+    const snap = calculateSnap({
+      deltaX: rawClientDelta.x,
+      deltaY: rawClientDelta.y,
+      gridOrigin: { x: viewBounds?.left ?? 0, y: viewBounds?.top ?? 0 },
+      moving: blockDrag.initialBounds,
+      others: blockDrag.otherBounds,
+      snapToGrid: Boolean(validatedState.current.grid && validatedState.current.snapToGrid),
+      threshold: 8
+    });
+    const point = clientToSvgPoint(
+      blockDrag.svg,
+      blockDrag.pointerClientStart.x + snap.deltaX,
+      blockDrag.pointerClientStart.y + snap.deltaY
+    );
     if (!point) return;
     const delta = { x: point.x - blockDrag.pointerStart.x, y: point.y - blockDrag.pointerStart.y };
     if (!blockDrag.started && Math.hypot(delta.x, delta.y) < 5) return;
@@ -870,20 +994,37 @@
     }
     event.preventDefault();
     event.stopPropagation();
-    const current = { x: blockDrag.initial.x + delta.x, y: blockDrag.initial.y + delta.y };
-    if (blockDrag.kind === 'block') {
-      moveBlockNode(blockDrag.svg, validatedState.current.code, blockDrag.id, current);
+    const current = Object.fromEntries(
+      Object.entries(blockDrag.initial).map(([id, position]) => [
+        id,
+        { x: position.x + delta.x, y: position.y + delta.y }
+      ])
+    );
+    const nextPositions = { ...(validatedState.current.visualPositions ?? {}), ...current };
+    const movedEntries = Object.entries(current);
+    if (movedEntries.length === 1) {
+      const [movedId, position] = movedEntries[0];
+      if (blockDrag.kind === 'block') {
+        moveBlockNode(blockDrag.svg, validatedState.current.code, movedId, position);
+      } else if (blockDrag.kind === 'c4') {
+        moveC4Node(blockDrag.svg, validatedState.current.code, movedId, position);
+      } else {
+        moveArchitectureNode(
+          blockDrag.svg,
+          validatedState.current.code,
+          movedId,
+          position,
+          validatedState.current.visualPositions
+        );
+      }
+    } else if (blockDrag.kind === 'block') {
+      applyBlockPositions(blockDrag.svg, validatedState.current.code, nextPositions);
     } else if (blockDrag.kind === 'c4') {
-      moveC4Node(blockDrag.svg, validatedState.current.code, blockDrag.id, current);
+      applyC4Positions(blockDrag.svg, validatedState.current.code, nextPositions);
     } else {
-      moveArchitectureNode(
-        blockDrag.svg,
-        validatedState.current.code,
-        blockDrag.id,
-        current,
-        validatedState.current.visualPositions
-      );
+      applyArchitecturePositions(blockDrag.svg, validatedState.current.code, nextPositions);
     }
+    snapGuides = snap.guides;
     blockDrag = { ...blockDrag, current, started: true };
   };
 
@@ -898,21 +1039,33 @@
 
   const finishBlockDrag = (event: Event) => {
     if (!blockDrag) return;
+    if (
+      event instanceof PointerEvent &&
+      blockDrag.pointerId !== undefined &&
+      event.pointerId !== blockDrag.pointerId
+    ) {
+      return;
+    }
     const drag = blockDrag;
     blockDrag = undefined;
+    snapGuides = [];
     releaseBlockPointer(drag.pointerId);
     panZoomState.resumeInteraction();
     if (!drag.started) return;
     if (event.cancelable) event.preventDefault();
     event.stopPropagation();
     suppressVisualClickUntil = performance.now() + 300;
-    updateVisualPositions({
-      ...(validatedState.current.visualPositions ?? {}),
-      [drag.id]: drag.current
-    });
+    updateVisualPositionsBatch(drag.current);
   };
 
-  const cancelBlockDrag = () => {
+  const cancelBlockDrag = (event?: Event) => {
+    if (
+      event instanceof PointerEvent &&
+      blockDrag?.pointerId !== undefined &&
+      event.pointerId !== blockDrag.pointerId
+    ) {
+      return;
+    }
     if (blockDrag) {
       releaseBlockPointer(blockDrag.pointerId);
       if (blockDrag.kind === 'block') {
@@ -936,6 +1089,114 @@
       }
     }
     blockDrag = undefined;
+    snapGuides = [];
+    panZoomState.resumeInteraction();
+  };
+
+  const isBlankCanvasTarget = (target: EventTarget | null): boolean =>
+    target instanceof Element &&
+    Boolean(target.closest('#container')) &&
+    !target.closest('[data-visual-id]') &&
+    !target.closest('text, tspan, foreignObject');
+
+  const startMarquee = (event: PointerEvent) => {
+    if (
+      event.pointerType === 'touch' ||
+      !isPrimaryDragStart(event) ||
+      activeTextEdit ||
+      !isBlankCanvasTarget(event.target) ||
+      (!visualSelection.isSelectionMode && !event.shiftKey)
+    ) {
+      return;
+    }
+    const rect = view?.getBoundingClientRect();
+    if (!rect) return;
+    event.preventDefault();
+    event.stopPropagation();
+    panZoomState.suspendInteraction();
+    const pointerId = event.pointerId;
+    try {
+      container?.setPointerCapture(pointerId);
+    } catch {
+      // Synthetic and older touch sources do not always expose pointer capture.
+    }
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    marquee = {
+      additive: event.ctrlKey || event.metaKey || event.shiftKey ? [...visualSelection.items] : [],
+      currentX: x,
+      currentY: y,
+      pointerId,
+      startX: x,
+      startY: y,
+      started: false
+    };
+  };
+
+  const updateMarquee = (event: PointerEvent) => {
+    if (!marquee || event.buttons !== 1 || !view) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const viewRect = view.getBoundingClientRect();
+    const currentX = event.clientX - viewRect.left;
+    const currentY = event.clientY - viewRect.top;
+    const left = viewRect.left + Math.min(marquee.startX, currentX);
+    const right = viewRect.left + Math.max(marquee.startX, currentX);
+    const top = viewRect.top + Math.min(marquee.startY, currentY);
+    const bottom = viewRect.top + Math.max(marquee.startY, currentY);
+    const matches = visualDocument.current.filter((item) => {
+      if (validatedState.current.visualLayers?.[item.id]?.hidden) return false;
+      const bounds = item.element.getBoundingClientRect();
+      return (
+        bounds.right >= left && bounds.left <= right && bounds.bottom >= top && bounds.top <= bottom
+      );
+    });
+    marquee = {
+      ...marquee,
+      currentX,
+      currentY,
+      started:
+        marquee.started || Math.hypot(currentX - marquee.startX, currentY - marquee.startY) >= 4
+    };
+    setVisualSelection([...marquee.additive, ...matches]);
+  };
+
+  const finishMarquee = (event: PointerEvent) => {
+    if (!marquee) return;
+    if (marquee.pointerId !== undefined && event.pointerId !== marquee.pointerId) return;
+    const pointerId = marquee.pointerId;
+    const started = marquee.started;
+    marquee = undefined;
+    if (pointerId !== undefined && container?.hasPointerCapture(pointerId)) {
+      try {
+        container.releasePointerCapture(pointerId);
+      } catch {
+        // The browser may have released it already.
+      }
+    }
+    panZoomState.resumeInteraction();
+    if (started) suppressVisualClickUntil = performance.now() + 300;
+    event.preventDefault();
+    event.stopPropagation();
+  };
+
+  const cancelMarquee = (event?: Event) => {
+    if (
+      event instanceof PointerEvent &&
+      marquee?.pointerId !== undefined &&
+      event.pointerId !== marquee.pointerId
+    ) {
+      return;
+    }
+    const pointerId = marquee?.pointerId;
+    marquee = undefined;
+    if (pointerId !== undefined && container?.hasPointerCapture(pointerId)) {
+      try {
+        container.releasePointerCapture(pointerId);
+      } catch {
+        // The browser may have released it while cancelling the gesture.
+      }
+    }
     panZoomState.resumeInteraction();
   };
 
@@ -1015,27 +1276,28 @@
       text
     });
 
-  const startInlineTextEdit = (event: MouseEvent) => {
+  const startInlineTextEditForTarget = (
+    target: EventTarget | null,
+    point?: { clientX: number; clientY: number }
+  ) => {
     if (
-      event.target instanceof Element &&
-      event.target.closest(
+      target instanceof Element &&
+      target.closest(
         '.branch-button, .color-button, .delete-button, .timeline-order-button, .diagram-special-button'
       )
     ) {
       return;
     }
-    const textElement = getEditableTextElement(event.target);
-    const text = getEditableLabel(event.target, event);
+    const textElement = getEditableTextElement(target);
+    const text = getEditableLabel(target, point);
     if (!view || !textElement || !text) {
       activeTextEdit = undefined;
       return;
     }
 
-    const sourceId = getSourceId(event.target);
-    const occurrence = getTextOccurrence(event.target, text, event);
-    const displayText = normalizeVisibleText(
-      getTextLeafElement(event.target, event)?.textContent ?? ''
-    );
+    const sourceId = getVisualSourceId(target);
+    const occurrence = getTextOccurrence(target, text, point);
+    const displayText = normalizeVisibleText(getTextLeafElement(target, point)?.textContent ?? '');
     const range =
       findRequirementFieldRange(validatedState.current.code, displayText, sourceId) ??
       getInlineTextEditRange(text, sourceId, occurrence);
@@ -1060,6 +1322,10 @@
       textEditInput?.focus();
       textEditInput?.select();
     });
+  };
+
+  const startInlineTextEdit = (event: MouseEvent) => {
+    startInlineTextEditForTarget(event.target, event);
   };
 
   const applyInlineTextEdit = (nextText: string) => {
@@ -1096,6 +1362,7 @@
     }
     if (event.key === 'Escape') {
       event.preventDefault();
+      event.stopPropagation();
       cancelInlineTextEdit();
     }
   };
@@ -1114,24 +1381,43 @@
     ) {
       return;
     }
+    const documentTarget = getVisualDocumentTarget(event.target, visualDocument.current);
     const styleTarget = getStyleTarget(event.target);
     const text = getEditableLabel(event.target, event);
-    const sourceId = getSourceId(event.target);
+    const sourceId = documentTarget?.sourceId ?? getVisualSourceId(event.target);
     const occurrence = getTextOccurrence(event.target, text, event);
-    const styleId = styleTarget ? getStyleID(styleTarget) : '';
+    const styleId = documentTarget?.styleId ?? (styleTarget ? getStyleID(styleTarget) : '');
     const isBlockEdge = currentDiagramKeyword() === 'block-beta' && /(?:^|-)L_/.test(styleId);
-    if (!text && !styleId) {
+    if (!text && !styleId && !documentTarget) {
       branchTarget = undefined;
       colorTarget = undefined;
       deleteTarget = undefined;
+      if (!event.shiftKey && !event.ctrlKey && !event.metaKey) clearVisualSelection();
       return;
     }
     event.preventDefault();
     event.stopPropagation();
+    if (documentTarget) {
+      const additive =
+        event.shiftKey || event.ctrlKey || event.metaKey || visualSelection.isSelectionMode;
+      selectVisualElement(documentTarget, { additive, toggle: additive });
+    } else if (styleId) {
+      selectVisualElement(
+        { id: styleId, label: text || '选中元素', occurrence, sourceId, styleId },
+        {
+          additive: event.shiftKey || event.ctrlKey || event.metaKey,
+          toggle: event.shiftKey || event.ctrlKey || event.metaKey
+        }
+      );
+    }
+    const locked = Boolean(
+      documentTarget && validatedState.current.visualLayers?.[documentTarget.id]?.locked
+    );
     if (isBlockEdge) {
       branchTarget = undefined;
-      showDeleteButton(event, '', '箭头', 0, styleId);
-      showColorButton(event, styleId, '箭头');
+      if (!locked) showDeleteButton(event, '', '箭头', 0, styleId);
+      if (!locked) showColorButton(event, styleId, '箭头');
+      else colorTarget = undefined;
       return;
     }
     if (blockArrowSourceLabel && text && currentDiagramKeyword() === 'block-beta') {
@@ -1142,7 +1428,7 @@
       deleteTarget = undefined;
       return;
     }
-    if (text) {
+    if (text && !locked) {
       requestEditorFocus(text, sourceId || undefined, occurrence);
       showBranchButton(event, sourceId, text);
       showDeleteButton(event, sourceId, text, occurrence, styleId);
@@ -1150,10 +1436,20 @@
       branchTarget = undefined;
       deleteTarget = undefined;
     }
-    showColorButton(event, styleId, text);
+    if (!locked) {
+      showColorButton(
+        event,
+        styleId,
+        visualSelection.count > 1 ? `${visualSelection.count} 个元素` : text
+      );
+    } else {
+      colorTarget = undefined;
+    }
   };
 
   const handleVisualTextDoubleClick = (event: MouseEvent) => {
+    const item = getVisualDocumentTarget(event.target, visualDocument.current);
+    if (item && validatedState.current.visualLayers?.[item.id]?.locked) return;
     event.preventDefault();
     event.stopPropagation();
     startInlineTextEdit(event);
@@ -1181,7 +1477,8 @@
           rough === state.rough &&
           panZoom === state.panZoom &&
           visualStylesFingerprint === JSON.stringify(state.visualStyles ?? {}) &&
-          visualPositionsFingerprint === JSON.stringify(state.visualPositions ?? {})
+          visualPositionsFingerprint === JSON.stringify(state.visualPositions ?? {}) &&
+          visualLayersFingerprint === JSON.stringify(state.visualLayers ?? {})
         ) {
           return;
         }
@@ -1201,6 +1498,8 @@
 
         const visualStylesChanged =
           visualStylesFingerprint !== JSON.stringify(state.visualStyles ?? {});
+        const visualLayersChanged =
+          visualLayersFingerprint !== JSON.stringify(state.visualLayers ?? {});
         const mustClearVisualStyles =
           visualStylesChanged && Object.keys(state.visualStyles ?? {}).length === 0;
 
@@ -1210,12 +1509,12 @@
           rough === state.rough &&
           panZoom === state.panZoom &&
           ((visualStylesChanged && !mustClearVisualStyles) ||
-            visualPositionsFingerprint !== JSON.stringify(state.visualPositions ?? {}))
+            visualPositionsFingerprint !== JSON.stringify(state.visualPositions ?? {}) ||
+            visualLayersChanged)
         ) {
           const graphDiv = container.querySelector<SVGSVGElement>('svg');
           if (graphDiv) {
             prepareStyleTargets(graphDiv, state.code);
-            applyVisualStyles(graphDiv, state.visualStyles);
             if (getDiagramKeyword(state.code) === 'block-beta') {
               applyBlockPositions(graphDiv, state.code, state.visualPositions);
             } else if (getDiagramKeyword(state.code).startsWith('c4')) {
@@ -1223,9 +1522,12 @@
             } else if (getDiagramKeyword(state.code) === 'architecture-beta') {
               applyArchitecturePositions(graphDiv, state.code, state.visualPositions);
             }
+            refreshVisualDocument(graphDiv, state);
+            applyVisualStyles(graphDiv, state.visualStyles);
           }
           visualStylesFingerprint = JSON.stringify(state.visualStyles ?? {});
           visualPositionsFingerprint = JSON.stringify(state.visualPositions ?? {});
+          visualLayersFingerprint = JSON.stringify(state.visualLayers ?? {});
           return;
         }
 
@@ -1239,6 +1541,7 @@
         panZoom = state.panZoom ?? true;
         visualStylesFingerprint = JSON.stringify(state.visualStyles ?? {});
         visualPositionsFingerprint = JSON.stringify(state.visualPositions ?? {});
+        visualLayersFingerprint = JSON.stringify(state.visualLayers ?? {});
 
         if (mayContainFontAwesome(code)) {
           await waitForFontAwesomeToLoad?.();
@@ -1286,7 +1589,6 @@
           }
           enableVisualTextFocus(graphDiv);
           prepareStyleTargets(graphDiv, state.code);
-          applyVisualStyles(graphDiv, state.visualStyles);
           if (getDiagramKeyword(state.code) === 'block-beta') {
             applyBlockPositions(graphDiv, state.code, state.visualPositions);
           } else if (getDiagramKeyword(state.code).startsWith('c4')) {
@@ -1294,6 +1596,8 @@
           } else if (getDiagramKeyword(state.code) === 'architecture-beta') {
             applyArchitecturePositions(graphDiv, state.code, state.visualPositions);
           }
+          refreshVisualDocument(graphDiv, state);
+          applyVisualStyles(graphDiv, state.visualStyles);
         }
         if (view?.parentElement && scroll) {
           view.parentElement.scrollTop = scroll;
@@ -1329,6 +1633,7 @@
       touchCaptureOptions
     );
     containerElement?.addEventListener('pointerdown', startMoodDrag, captureOptions);
+    containerElement?.addEventListener('pointerdown', startMarquee, captureOptions);
     containerElement?.addEventListener('pointerdown', startQuadrantDrag, captureOptions);
     containerElement?.addEventListener('pointerdown', startWardleyDrag, captureOptions);
     containerElement?.addEventListener('pointerdown', startBlockDrag, captureOptions);
@@ -1337,19 +1642,23 @@
     containerElement?.addEventListener('pointerdown', startStructuralDrag, captureOptions);
     containerElement?.addEventListener('lostpointercapture', finishBlockDrag, captureOptions);
     window.addEventListener('pointermove', updateMoodDrag, captureOptions);
+    window.addEventListener('pointermove', updateMarquee, captureOptions);
     window.addEventListener('pointermove', updateQuadrantDrag, captureOptions);
     window.addEventListener('pointermove', updateWardleyDrag, captureOptions);
     window.addEventListener('pointermove', updateBlockDrag, captureOptions);
     window.addEventListener('pointermove', updateStructuralDrag, captureOptions);
     window.addEventListener('pointerup', finishMoodDrag, captureOptions);
+    window.addEventListener('pointerup', finishMarquee, captureOptions);
     window.addEventListener('pointerup', finishQuadrantDrag, captureOptions);
     window.addEventListener('pointerup', finishWardleyDrag, captureOptions);
     window.addEventListener('pointerup', finishBlockDrag, captureOptions);
     window.addEventListener('pointerup', finishStructuralDrag, captureOptions);
     window.addEventListener('pointercancel', cancelStructuralDrag, captureOptions);
+    window.addEventListener('pointercancel', cancelMarquee, captureOptions);
     window.addEventListener('pointercancel', cancelBlockDrag, captureOptions);
     window.addEventListener('pointercancel', cancelPointDrag, captureOptions);
     window.addEventListener('blur', cancelStructuralDrag);
+    window.addEventListener('blur', cancelMarquee);
     window.addEventListener('blur', cancelBlockDrag);
     window.addEventListener('blur', cancelPointDrag);
     containerElement?.addEventListener('click', handleVisualTextFocus, captureOptions);
@@ -1367,6 +1676,7 @@
         touchCaptureOptions
       );
       containerElement?.removeEventListener('pointerdown', startMoodDrag, captureOptions);
+      containerElement?.removeEventListener('pointerdown', startMarquee, captureOptions);
       containerElement?.removeEventListener('pointerdown', startQuadrantDrag, captureOptions);
       containerElement?.removeEventListener('pointerdown', startWardleyDrag, captureOptions);
       containerElement?.removeEventListener('pointerdown', startBlockDrag, captureOptions);
@@ -1375,24 +1685,29 @@
       containerElement?.removeEventListener('pointerdown', startStructuralDrag, captureOptions);
       containerElement?.removeEventListener('lostpointercapture', finishBlockDrag, captureOptions);
       window.removeEventListener('pointermove', updateMoodDrag, captureOptions);
+      window.removeEventListener('pointermove', updateMarquee, captureOptions);
       window.removeEventListener('pointermove', updateQuadrantDrag, captureOptions);
       window.removeEventListener('pointermove', updateWardleyDrag, captureOptions);
       window.removeEventListener('pointermove', updateBlockDrag, captureOptions);
       window.removeEventListener('pointermove', updateStructuralDrag, captureOptions);
       window.removeEventListener('pointerup', finishMoodDrag, captureOptions);
+      window.removeEventListener('pointerup', finishMarquee, captureOptions);
       window.removeEventListener('pointerup', finishQuadrantDrag, captureOptions);
       window.removeEventListener('pointerup', finishWardleyDrag, captureOptions);
       window.removeEventListener('pointerup', finishBlockDrag, captureOptions);
       window.removeEventListener('pointerup', finishStructuralDrag, captureOptions);
       window.removeEventListener('pointercancel', cancelStructuralDrag, captureOptions);
+      window.removeEventListener('pointercancel', cancelMarquee, captureOptions);
       window.removeEventListener('pointercancel', cancelBlockDrag, captureOptions);
       window.removeEventListener('pointercancel', cancelPointDrag, captureOptions);
       window.removeEventListener('blur', cancelStructuralDrag);
+      window.removeEventListener('blur', cancelMarquee);
       window.removeEventListener('blur', cancelBlockDrag);
       window.removeEventListener('blur', cancelPointDrag);
       cancelPointDrag();
       cancelBlockDrag();
       cancelStructuralDrag();
+      cancelMarquee();
       flushPanZoom();
       containerElement?.removeEventListener('click', handleVisualTextFocus, captureOptions);
       containerElement?.removeEventListener(
@@ -1401,7 +1716,47 @@
         captureOptions
       );
       panZoomState.destroy();
+      clearVisualDocument();
     };
+  });
+
+  $effect(() => {
+    const ids = visualSelection.ids;
+    const primaryId = visualSelection.current?.id ?? '';
+    applyVisualSelectionState(visualDocument.current, new Set(ids), primaryId);
+  });
+
+  $effect(() => {
+    const request = visualDocument.focusRequest;
+    if (!request || request.id === handledFocusRequestId || !container) return;
+    handledFocusRequestId = request.id;
+    container
+      .querySelectorAll('.visual-search-current')
+      .forEach((element) => element.classList.remove('visual-search-current'));
+    let target = request.visualId
+      ? visualDocument.current.find(({ id }) => id === request.visualId)?.element
+      : undefined;
+    if (!target && request.text) {
+      const matches = getCanonicalTextLeaves(container).filter(
+        (element) =>
+          normalizeVisibleText(element.textContent ?? '').toLocaleLowerCase() ===
+          normalizeVisibleText(request.text).toLocaleLowerCase()
+      );
+      target = matches[request.occurrence ?? 0] ?? matches[0];
+    }
+    if (!target) return;
+    const highlight = target.closest('[data-visual-id]') ?? target;
+    highlight.classList.add('visual-search-current');
+    requestAnimationFrame(() => panZoomState.focusElement(highlight));
+  });
+
+  $effect(() => {
+    const request = visualDocument.editRequest;
+    if (!request || request.id === handledEditRequestId) return;
+    handledEditRequestId = request.id;
+    const item = visualDocument.current.find(({ id }) => id === request.visualId);
+    if (!item || validatedState.current.visualLayers?.[item.id]?.locked) return;
+    startInlineTextEditForTarget(item.element);
   });
 
   // Queue state changes to avoid race condition
@@ -1426,10 +1781,36 @@
     shouldShowGrid && `grid-bg-${mode.current}`,
     error && 'opacity-50'
   ]}>
-  <div id="container" bind:this={container} class="h-full w-full overflow-auto"></div>
+  <div id="container" bind:this={container} class="box-border h-full w-full overflow-auto py-14">
+  </div>
+  {#if marquee}
+    <div
+      class="pointer-events-none absolute z-30 border border-accent bg-accent/10"
+      data-testid="selection-marquee"
+      style={`left: ${Math.min(marquee.startX, marquee.currentX)}px; top: ${Math.min(
+        marquee.startY,
+        marquee.currentY
+      )}px; width: ${Math.abs(marquee.currentX - marquee.startX)}px; height: ${Math.abs(
+        marquee.currentY - marquee.startY
+      )}px;`}>
+    </div>
+  {/if}
+  {#each snapGuides as guide (`${guide.axis}-${guide.value}`)}
+    <div
+      class={[
+        'pointer-events-none absolute z-20 bg-accent/80',
+        guide.axis === 'x' ? 'top-0 h-full w-px' : 'left-0 h-px w-full'
+      ]}
+      data-testid="snap-guide"
+      style={guide.axis === 'x'
+        ? `left: ${guide.value - (view?.getBoundingClientRect().left ?? 0)}px;`
+        : `top: ${guide.value - (view?.getBoundingClientRect().top ?? 0)}px;`}>
+    </div>
+  {/each}
   {#if branchTarget}
     <Button
       class="branch-button absolute z-20 shadow-lg"
+      data-source-id={branchTarget.sourceId}
       style={`left: ${branchTarget.x}px; top: ${branchTarget.y}px;`}
       title={`给“${branchTarget.label}”添加分支`}
       onclick={addBranch}>
@@ -1585,5 +1966,24 @@
   :global(.visual-text-editing [data-style-id]:hover) {
     outline: 2px solid color-mix(in srgb, var(--color-accent) 70%, transparent);
     outline-offset: 2px;
+  }
+
+  :global(.visual-element-selected) {
+    outline: 3px solid color-mix(in srgb, var(--color-accent) 88%, white);
+    outline-offset: 3px;
+  }
+
+  :global(.visual-element-primary) {
+    filter: drop-shadow(0 0 5px color-mix(in srgb, var(--color-accent) 65%, transparent));
+  }
+
+  :global(.visual-element-locked) {
+    cursor: not-allowed !important;
+    opacity: 0.82;
+  }
+
+  :global(.visual-search-current) {
+    outline: 4px solid #facc15;
+    outline-offset: 5px;
   }
 </style>

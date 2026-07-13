@@ -3,7 +3,15 @@
   import { Button } from '$/components/ui/button';
   import { Separator } from '$/components/ui/separator';
   import type { PanZoomState } from '$/util/panZoom';
-  import { canRedoEdit, canUndoEdit, redoLastEdit, undoLastEdit } from '$/util/state.svelte';
+  import {
+    canRedoEdit,
+    canUndoEdit,
+    redoLastEdit,
+    setSnapToGrid,
+    undoLastEdit,
+    validatedState
+  } from '$/util/state.svelte';
+  import { Magnet } from 'lucide-svelte';
   import ArrowsToCircleIcon from '~icons/material-symbols/screenshot-frame-2';
   import RedoIcon from '~icons/material-symbols/redo-rounded';
   import UndoIcon from '~icons/material-symbols/undo-rounded';
@@ -31,6 +39,15 @@
     onclick={() => redoLastEdit()}>
     <RedoIcon />
     恢复
+  </Button>
+  <Separator orientation="vertical" />
+  <Button
+    variant={validatedState.current.snapToGrid ? 'accent' : 'ghost'}
+    size="icon"
+    title={validatedState.current.snapToGrid ? '关闭网格吸附' : '开启网格吸附'}
+    aria-label={validatedState.current.snapToGrid ? '关闭网格吸附' : '开启网格吸附'}
+    onclick={() => setSnapToGrid(!validatedState.current.snapToGrid)}>
+    <Magnet class="size-4" />
   </Button>
   <Separator orientation="vertical" />
   <Button variant="ghost" size="icon" title="重置视图" onclick={() => panZoomState.reset()}>

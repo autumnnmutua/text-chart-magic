@@ -114,11 +114,11 @@ export const findSourceIdLabelRange = (
 };
 
 const visibleTextPatterns = [
-  /"([^"]+)"/g,
-  /'([^']+)'/g,
-  /\[([^\]]+)\]/g,
-  /\(([^)]+)\)/g,
-  /\{([^}]+)\}/g,
+  /"([^"\n]+)"/g,
+  /'([^'\n]+)'/g,
+  /\[([^\]\n]+)\]/g,
+  /\(([^)\n]+)\)/g,
+  /\{([^}\n]+)\}/g,
   /\|([^|\n]+)\|/g,
   /^\s*(?:participant|actor)\s+([A-Za-z][\w-]*)\b/gim,
   /^\s*(?:branch|checkout|switch|merge)\s+([^\s]+)/gim,
@@ -136,6 +136,55 @@ const visibleTextPatterns = [
   /:\s*([^:\n]+)(?=\n|$)/g,
   /^(?!\s*(?:---|%%|flowchart|graph|sequenceDiagram|classDiagram|stateDiagram(?:-v2)?|pie|mindmap|timeline|treemap-beta|treeView-beta|kanban|block-beta|quadrantChart|journey|gantt|gitGraph|erDiagram|requirementDiagram|architecture-beta|xychart-beta|sankey-beta|packet|radar-beta|venn-beta|wardley-beta)\b)\s*([^:\n"'`()[\]{}][^:\n]*?)\s*$/gim
 ];
+
+export interface EditableSourceText {
+  id: string;
+  kind: 'field' | 'label' | 'relation' | 'text';
+  range: SourceTextRange;
+  text: string;
+}
+
+export const collectEditableSourceText = (code: string): EditableSourceText[] => {
+  const candidates = visibleTextPatterns.flatMap((pattern) => {
+    const indexedPattern = pattern.hasIndices
+      ? pattern
+      : new RegExp(pattern.source, `${pattern.flags}d`);
+    return Array.from(code.matchAll(indexedPattern)).flatMap((match) => {
+      const { groupIndex, value } = getMatchedValue(match);
+      const text = value.trim();
+      if (!text || /^[-+]?\d+(?:\.\d+)?%?$/.test(text)) return [];
+      const untrimmed = getValueRange(match, value, groupIndex);
+      const leading = value.length - value.trimStart().length;
+      const range = {
+        start: untrimmed.start + leading,
+        end: untrimmed.start + leading + text.length
+      };
+      const line = code.slice(
+        code.lastIndexOf('\n', range.start - 1) + 1,
+        code.indexOf('\n', range.end) < 0 ? code.length : code.indexOf('\n', range.end)
+      );
+      const kind: EditableSourceText['kind'] = /\|[^|]+\||--?>|<--?|:\s*/.test(line)
+        ? 'relation'
+        : /^\s*(?:id|text|risk|verifymethod|docref|type)\s*:/i.test(line)
+          ? 'field'
+          : /[[({"']/.test(line)
+            ? 'label'
+            : 'text';
+      return [{ id: `text:${range.start}:${range.end}`, kind, range, text }];
+    });
+  });
+
+  const nonOverlapping: EditableSourceText[] = [];
+  // Pattern order is semantic priority: quoted labels outrank their wrapping
+  // node syntax, while full node labels outrank punctuation nested inside them.
+  for (const candidate of candidates) {
+    const overlaps = nonOverlapping.some(
+      ({ range }) => candidate.range.start < range.end && candidate.range.end > range.start
+    );
+    if (!overlaps) nonOverlapping.push(candidate);
+  }
+  return nonOverlapping.sort((left, right) => left.range.start - right.range.start);
+};
 
 export const findVisibleTextRange = (
   code: string,
@@ -691,14 +740,18 @@ const removeRequirementBlock = (code: string, target: VisualTextTarget): string 
 const removeC4Element = (code: string, target: VisualTextTarget): string | undefined => {
   const wanted = normalizeVisibleText(target.text);
   const lines = code.split('\n');
-  const relationIndex = target.sourceId
-    ? -1
-    : lines.findIndex((line) => {
-        if (!/^\s*(?:BiRel|Rel|Rel_[A-Za-z]+)\(/i.test(line)) return false;
-        return [...line.matchAll(/"([^"]+)"/g)].some(
-          (item) => normalizeVisibleText(item[1]) === wanted
-        );
-      });
+  const generatedVisualSource =
+    target.sourceId === target.styleId &&
+    /^(?:visual|text|foreignObject|line|path)-\d+$/i.test(target.sourceId ?? '');
+  const relationIndex =
+    target.sourceId && !generatedVisualSource
+      ? -1
+      : lines.findIndex((line) => {
+          if (!/^\s*(?:BiRel|Rel|Rel_[A-Za-z]+)\(/i.test(line)) return false;
+          return [...line.matchAll(/"([^"]+)"/g)].some(
+            (item) => normalizeVisibleText(item[1]) === wanted
+          );
+        });
   if (relationIndex >= 0) {
     lines.splice(relationIndex, 1);
     return `${lines

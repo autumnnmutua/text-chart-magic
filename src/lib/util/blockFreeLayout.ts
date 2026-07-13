@@ -1,3 +1,5 @@
+import { pointAlongRoute, routeOrthogonalEdge, routeToPathData } from './edgeRouting';
+
 export interface VisualPosition {
   x: number;
   y: number;
@@ -99,31 +101,48 @@ const boundaryPoint = (
   return { x: from.x, y: from.y + Math.sign(dy || 1) * halfHeight };
 };
 
-const edgePath = (
-  source: ReturnType<typeof getCenterAndSize>,
-  target: ReturnType<typeof getCenterAndSize>
-) => {
-  const start = boundaryPoint(source, target);
-  const end = boundaryPoint(target, source);
-  if (Math.abs(end.x - start.x) >= Math.abs(end.y - start.y)) {
-    const middleX = (start.x + end.x) / 2;
-    return `M${start.x},${start.y}L${middleX},${start.y}L${middleX},${end.y}L${end.x},${end.y}`;
-  }
-  const middleY = (start.y + end.y) / 2;
-  return `M${start.x},${start.y}L${start.x},${middleY}L${end.x},${middleY}L${end.x},${end.y}`;
-};
-
-export const updateBlockEdges = (svg: SVGSVGElement, code: string): void => {
+export const updateBlockEdges = (svg: SVGSVGElement, code: string, movedId = ''): void => {
   prepareBlockEdgeTargets(svg, code);
   const nodes = getNodeMap(svg);
-  for (const edge of getBlockEdges(code)) {
+  const edges = getBlockEdges(code);
+  const labels = [...svg.querySelectorAll<SVGGElement>('g.edgeLabel')];
+  for (const edge of edges) {
+    if (movedId && edge.source !== movedId && edge.target !== movedId) continue;
     const source = nodes.get(edge.source);
     const target = nodes.get(edge.target);
     const path = [...svg.querySelectorAll<SVGPathElement>('path.flowchart-link')].find(
       (candidate) => candidate.dataset.styleId === getBlockEdgeStyleId(edge)
     );
     if (!source || !target || !path) continue;
-    path.setAttribute('d', edgePath(getCenterAndSize(source), getCenterAndSize(target)));
+    const sourceGeometry = getCenterAndSize(source);
+    const targetGeometry = getCenterAndSize(target);
+    const start = boundaryPoint(sourceGeometry, targetGeometry);
+    const end = boundaryPoint(targetGeometry, sourceGeometry);
+    const obstacles = [...nodes.entries()]
+      .filter(([id]) => id !== edge.source && id !== edge.target)
+      .map(([, node]) => {
+        const geometry = getCenterAndSize(node);
+        return {
+          bottom: geometry.y + geometry.height / 2,
+          left: geometry.x - geometry.width / 2,
+          right: geometry.x + geometry.width / 2,
+          top: geometry.y - geometry.height / 2
+        };
+      });
+    const parallelIndex = edges
+      .slice(0, edge.index)
+      .filter(
+        (candidate) => candidate.source === edge.source && candidate.target === edge.target
+      ).length;
+    const route = routeOrthogonalEdge(start, end, obstacles, {
+      laneOffset: parallelIndex * 12
+    });
+    path.setAttribute('d', routeToPathData(route));
+    const label = labels[edge.index];
+    if (label && label.textContent?.trim()) {
+      const point = pointAlongRoute(route);
+      label.setAttribute('transform', `translate(${point.x}, ${point.y})`);
+    }
   }
 };
 
@@ -158,7 +177,7 @@ export const moveBlockNode = (
   node.dataset.offsetY = `${position.y}`;
   node.setAttribute('transform', `translate(${base.x + position.x}, ${base.y + position.y})`);
   node.style.cursor = 'grabbing';
-  updateBlockEdges(svg, code);
+  updateBlockEdges(svg, code, id);
   return true;
 };
 

@@ -1,4 +1,5 @@
 import type { VisualPosition } from './blockFreeLayout';
+import { routeOrthogonalEdge, routeToPathData } from './edgeRouting';
 
 interface ArchitectureEdge {
   source: string;
@@ -65,9 +66,12 @@ const edgeEndpoints = (
 const updateArchitectureEdges = (
   svg: SVGSVGElement,
   code: string,
-  positions: Record<string, VisualPosition> = {}
+  positions: Record<string, VisualPosition> = {},
+  movedId = ''
 ) => {
-  for (const { source, target } of architectureEdges(code)) {
+  const edges = architectureEdges(code);
+  for (const { source, target } of edges) {
+    if (movedId && source !== movedId && target !== movedId) continue;
     const sourceGroup = getServiceGroup(svg, source);
     const targetGroup = getServiceGroup(svg, target);
     const path = [...svg.querySelectorAll<SVGPathElement>('.architecture-edges path.edge')].find(
@@ -75,13 +79,18 @@ const updateArchitectureEdges = (
         item.id.includes(`L_${source}_${target}_`) || item.id.includes(`L_${target}_${source}_`)
     );
     if (!sourceGroup || !targetGroup || !path) continue;
-    const [x1, y1, x2, y2] = edgeEndpoints(
-      getNodeBounds(sourceGroup, positions[source]),
-      getNodeBounds(targetGroup, positions[target])
+    const sourceBounds = getNodeBounds(sourceGroup, positions[source]);
+    const targetBounds = getNodeBounds(targetGroup, positions[target]);
+    const [x1, y1, x2, y2] = edgeEndpoints(sourceBounds, targetBounds);
+    const obstacles = [...svg.querySelectorAll<SVGGElement>('g.architecture-service')].flatMap(
+      (group) => {
+        const id = group.dataset.architectureId ?? group.id.match(/-service-(.+)$/)?.[1];
+        if (!id || id === source || id === target) return [];
+        return [getNodeBounds(group, positions[id])];
+      }
     );
-    const middleX = (x1 + x2) / 2;
-    const middleY = (y1 + y2) / 2;
-    path.setAttribute('d', `M ${x1},${y1} L ${middleX},${middleY} L ${x2},${y2}`);
+    const route = routeOrthogonalEdge({ x: x1, y: y1 }, { x: x2, y: y2 }, obstacles);
+    path.setAttribute('d', routeToPathData(route));
   }
 };
 
@@ -117,5 +126,11 @@ export const moveArchitectureNode = (
   position: VisualPosition,
   positions: Record<string, VisualPosition> = {}
 ) => {
-  applyArchitecturePositions(svg, code, { ...positions, [id]: position });
+  const nextPositions = { ...positions, [id]: position };
+  const group = getServiceGroup(svg, id);
+  if (!group) return;
+  const base = parseTranslate(group.dataset.baseTransform);
+  group.setAttribute('transform', `translate(${base.x + position.x}, ${base.y + position.y})`);
+  group.style.cursor = 'grabbing';
+  updateArchitectureEdges(svg, code, nextPositions, id);
 };

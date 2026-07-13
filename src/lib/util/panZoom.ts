@@ -13,7 +13,7 @@ export class PanZoomState {
   private isInteractionSuspended = false;
   private resizeObserver: ResizeObserver;
 
-  public onPanZoomChange?: (pan: Point, zoom: number) => void;
+  public onPanZoomChange?: (pan: Point, zoom: number, immediate?: boolean) => void;
 
   constructor() {
     this.resizeObserver = new ResizeObserver(() => {
@@ -114,7 +114,7 @@ export class PanZoomState {
     if (pan && zoom && Number.isFinite(zoom) && Number.isFinite(pan.x) && Number.isFinite(pan.y)) {
       this.restorePanZoom(pan, zoom);
     } else {
-      this.reset();
+      this.resetViewport();
     }
 
     if (this.isInteractionSuspended) {
@@ -138,7 +138,7 @@ export class PanZoomState {
   public resize() {
     if (!this.pzoom || !this.hasRenderableBounds()) return;
     if (!this.isDirty) {
-      this.reset();
+      this.resetViewport();
     } else {
       this.pzoom.resize();
     }
@@ -146,10 +146,23 @@ export class PanZoomState {
 
   public zoomIn() {
     this.pzoom?.zoomIn();
+    this.commitCurrentView();
   }
 
   public zoomOut() {
     this.pzoom?.zoomOut();
+    this.commitCurrentView();
+  }
+
+  public focusElement(element: Element) {
+    if (!this.pzoom || !this.diagramView || !element.isConnected) return;
+    const viewport = this.diagramView.parentElement?.getBoundingClientRect();
+    const target = element.getBoundingClientRect();
+    if (!viewport || target.width <= 0 || target.height <= 0) return;
+    this.pzoom.panBy({
+      x: viewport.left + viewport.width / 2 - (target.left + target.width / 2),
+      y: viewport.top + viewport.height / 2 - (target.top + target.height / 2)
+    });
   }
 
   public suspendInteraction() {
@@ -165,6 +178,11 @@ export class PanZoomState {
   }
 
   public reset() {
+    this.resetViewport();
+    this.commitCurrentView();
+  }
+
+  private resetViewport() {
     const pzoom = this.pzoom;
     if (!pzoom || !this.hasRenderableBounds()) {
       this.isDirty = false;
@@ -181,6 +199,17 @@ export class PanZoomState {
     pzoom.zoom(Math.max(fittedZoom * 0.92, 0.05));
     pzoom.center();
     this.isDirty = false;
+  }
+
+  private commitCurrentView() {
+    const pzoom = this.pzoom;
+    if (!pzoom) return;
+    const pan = pzoom.getPan();
+    const zoom = pzoom.getZoom();
+    if (!Number.isFinite(pan.x) || !Number.isFinite(pan.y) || !Number.isFinite(zoom)) return;
+    this.pan = pan;
+    this.zoom = zoom;
+    this.onPanZoomChange?.(pan, zoom, true);
   }
 
   public destroy() {

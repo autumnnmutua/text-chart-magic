@@ -10,6 +10,8 @@ export const diagramStateKey = (state: State): string =>
     grid: state.grid ?? true,
     mermaid: state.mermaid,
     rough: state.rough,
+    snapToGrid: state.snapToGrid ?? true,
+    visualLayers: state.visualLayers ?? {},
     visualPositions: state.visualPositions ?? {},
     visualStyles: state.visualStyles ?? {}
   });

@@ -1,5 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
+const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+
 export default defineConfig({
   forbidOnly: !!process.env.CI,
   fullyParallel: true,
@@ -20,7 +22,7 @@ export default defineConfig({
     viewport: { width: 1920, height: 1080 }
   },
   webServer: {
-    command: `pnpm ${process.env.CI ? 'preview' : 'dev'}`,
+    command: `${npmCommand} run ${process.env.CI ? 'preview' : 'dev'}`,
     url: 'http://localhost:3000',
     reuseExistingServer: !process.env.CI
   },

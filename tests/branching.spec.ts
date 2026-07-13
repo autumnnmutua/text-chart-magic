@@ -1,31 +1,12 @@
 import { expect, test } from './test';
 import type { Page } from '@playwright/test';
+import { setEditorCode } from './utils';
 
 const getStoredCode = async (page: Page): Promise<string> =>
   page.evaluate(() => {
     const saved = window.localStorage.getItem('codeStore');
     return saved ? (JSON.parse(saved) as { code: string }).code : '';
   });
-
-const setEditorCode = async (page: Page, code: string): Promise<void> => {
-  await page.locator('#editor:visible, .cm-content:visible').first().click();
-  await page.keyboard.press('Control+A');
-  await page.keyboard.insertText(code);
-  await page.waitForFunction((expected) => {
-    const saved = window.localStorage.getItem('codeStore');
-    const normalize = (value: string) =>
-      value
-        .replace(/\r/g, '')
-        .split('\n')
-        .map((line) => line.trim())
-        .join('\n')
-        .trim();
-    return saved
-      ? normalize((JSON.parse(saved) as { code: string }).code) === normalize(expected)
-      : false;
-  }, code);
-  await page.waitForSelector('#view svg');
-};
 
 const expectDiagramCentered = async (page: Page): Promise<void> => {
   await page.waitForFunction(() => {
@@ -98,6 +79,7 @@ test.describe('图上分支编辑', () => {
 
     await page.locator('#view').getByText('输入中文想法', { exact: true }).click({ force: true });
     await expect(page.getByRole('button', { name: '分支' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '分支' })).toHaveAttribute('data-source-id', 'A');
 
     await page.getByRole('button', { name: '分支' }).click();
 
@@ -402,7 +384,8 @@ test.describe('图上分支编辑', () => {
     await setEditorCode(
       page,
       `flowchart TD
-    A[项目`
+    A[项目`,
+      { waitForRender: false }
     );
     await page.waitForFunction(() => {
       const saved = window.localStorage.getItem('codeStore');

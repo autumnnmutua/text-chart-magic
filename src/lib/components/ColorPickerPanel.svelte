@@ -2,7 +2,7 @@
   import Card from '$/components/Card/Card.svelte';
   import { Button } from '$/components/ui/button';
   import { Input } from '$/components/ui/input';
-  import { validatedState, updateVisualStyle } from '$/util/state.svelte';
+  import { validatedState, updateVisualStyles } from '$/util/state.svelte';
   import {
     closeVisualColorPanel,
     defaultVisualStyle,
@@ -201,7 +201,11 @@
     if (!selection) {
       return;
     }
-    updateVisualStyle(selection.id, {
+    const editableIds = visualSelection.ids.filter(
+      (id) => !validatedState.current.visualLayers?.[id]?.locked
+    );
+    if (editableIds.length === 0) return;
+    updateVisualStyles(editableIds, {
       alpha,
       fill: currentHex,
       stroke: currentHex,
@@ -340,7 +344,9 @@
       </div>
       <div class="min-w-0">
         <div class="truncate text-sm font-medium">
-          {visualSelection.current?.label ?? '选中元素'}
+          {visualSelection.count > 1
+            ? `${visualSelection.count} 个元素`
+            : (visualSelection.current?.label ?? '选中元素')}
         </div>
         <div class="text-xs text-muted-foreground">
           {currentHex.toUpperCase()} / {Math.round(alpha * 100)}%

@@ -10,6 +10,7 @@ import {
   inputState,
   loadState,
   normalizeState,
+  replaceAllDiagramText,
   replaceInputState,
   loadDiagramCode,
   redoLastEdit,
@@ -17,13 +18,17 @@ import {
   toggleDarkTheme,
   updateCode,
   updateCodeStore,
+  updateVisualLayer,
   updateVisualPositions,
+  updateVisualPositionsBatch,
   updateVisualStyle,
+  updateVisualStyles,
   updateConfig,
   undoLastEdit,
   validatedState,
   verifyState
 } from './state.svelte';
+import { searchEditableSourceText } from './searchModel';
 
 describe('saved state compatibility', () => {
   it('fills fields missing from legacy saved data without replacing its diagram', () => {
@@ -36,6 +41,8 @@ describe('saved state compatibility', () => {
     expect(normalized.rough).toBe(defaultState.rough);
     expect(normalized.updateDiagram).toBe(defaultState.updateDiagram);
     expect(normalized.editorMode).toBe('code');
+    expect(normalized.snapToGrid).toBe(true);
+    expect(normalized.visualLayers).toBeUndefined();
   });
 
   it('drops invalid view coordinates while retaining valid optional data', () => {
@@ -152,6 +159,73 @@ describe('update functions persist input state', () => {
     expect(readStoredState().visualPositions?.A).toEqual({ x: 120, y: 80 });
   });
 
+  it('stores a batch move as one undoable transaction', () => {
+    loadDiagramCode('block-beta\n  A["A"]\n  B["B"]');
+    expect(
+      updateVisualPositionsBatch({
+        A: { x: 80, y: 30 },
+        B: { x: 160, y: 30 }
+      })
+    ).toBe(true);
+    expect(inputState.visualPositions).toEqual({
+      A: { x: 80, y: 30 },
+      B: { x: 160, y: 30 }
+    });
+
+    expect(undoLastEdit()).toBe(true);
+    expect(inputState.visualPositions).toBeUndefined();
+    expect(redoLastEdit()).toBe(true);
+    expect(inputState.visualPositions?.B).toEqual({ x: 160, y: 30 });
+  });
+
+  it('stores batch style and lock changes without splitting each operation per element', () => {
+    loadDiagramCode('block-beta\n  A["A"]\n  B["B"]');
+    expect(updateVisualStyles(['A', 'B'], { fill: '#fb923c', stroke: '#c2410c' })).toBe(true);
+    expect(inputState.visualStyles?.A.fill).toBe('#fb923c');
+    expect(inputState.visualStyles?.B.stroke).toBe('#c2410c');
+    expect(undoLastEdit()).toBe(true);
+    expect(inputState.visualStyles).toBeUndefined();
+
+    expect(updateVisualLayer(['A', 'B'], { locked: true })).toBe(true);
+    expect(inputState.visualLayers?.A.locked).toBe(true);
+    expect(inputState.visualLayers?.B.locked).toBe(true);
+    expect(undoLastEdit()).toBe(true);
+    expect(inputState.visualLayers).toBeUndefined();
+  });
+
+  it('keeps batch movement and batch color as separate undo transactions', () => {
+    loadDiagramCode('block-beta\n  A["A"]\n  B["B"]');
+    updateVisualPositionsBatch({
+      A: { x: 60, y: 20 },
+      B: { x: 120, y: 20 }
+    });
+    updateVisualStyles(['A', 'B'], { fill: '#f97316', stroke: '#c2410c' });
+
+    expect(undoLastEdit()).toBe(true);
+    expect(inputState.visualStyles).toBeUndefined();
+    expect(inputState.visualPositions?.A).toEqual({ x: 60, y: 20 });
+    expect(undoLastEdit()).toBe(true);
+    expect(inputState.visualPositions).toBeUndefined();
+  });
+
+  it('replaces every search match as one undoable operation', () => {
+    const code = 'flowchart LR\n  A[旧名称] -->|旧关系| B[旧名称]';
+    loadDiagramCode(code);
+    const matches = searchEditableSourceText(code, '旧', {
+      caseSensitive: false,
+      wholeWord: false
+    });
+    expect(
+      replaceAllDiagramText(
+        matches.map(({ range, text }) => ({ currentText: text, nextText: '新', range }))
+      )
+    ).toBe(3);
+    expect(inputState.code).toContain('A[新名称]');
+    expect(inputState.code).toContain('|新关系|');
+    expect(undoLastEdit()).toBe(true);
+    expect(inputState.code).toBe(code);
+  });
+
   it('normalizes reactive position objects before persistence', () => {
     loadDiagramCode('C4Context\n  System(app, "应用")');
     const positions = $state({ app: { x: 48, y: 32 } });
@@ -162,6 +236,19 @@ describe('update functions persist input state', () => {
   it('updateCode writes the new code to localStorage', () => {
     updateCode('graph TD\n persisted-by-test');
     expect(readStoredState().code).toBe('graph TD\n persisted-by-test');
+  });
+
+  it('keeps the viewport for same-type edits and resets it when the diagram type changes', () => {
+    loadDiagramCode('flowchart LR\n  A --> B');
+    updateCodeStore({ pan: { x: 80, y: 40 }, zoom: 1.5 });
+
+    updateCode('flowchart TD\n  A --> B');
+    expect(inputState.pan).toEqual({ x: 80, y: 40 });
+    expect(inputState.zoom).toBe(1.5);
+
+    updateCode('treemap-beta\n"产品"\n  "需求": 12');
+    expect(inputState.pan).toBeUndefined();
+    expect(inputState.zoom).toBeUndefined();
   });
 
   it('updateCodeStore merges partial state and persists it', () => {

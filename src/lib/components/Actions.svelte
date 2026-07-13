@@ -51,12 +51,27 @@
     svgElement.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
     // Export diagram coordinates, not the temporary viewport pan/zoom matrix.
     svgElement.querySelector('.svg-pan-zoom_viewport')?.removeAttribute('transform');
+    const viewBox = svgElement.viewBox?.baseVal;
+    if (viewBox && viewBox.width > 0 && viewBox.height > 0) {
+      svgElement.setAttribute('width', `${Math.ceil(viewBox.width)}px`);
+      svgElement.setAttribute('height', `${Math.ceil(viewBox.height)}px`);
+    }
+    svgElement.style.removeProperty('display');
+    svgElement.style.removeProperty('width');
+    svgElement.style.removeProperty('height');
+    svgElement.style.removeProperty('max-width');
+    svgElement.style.removeProperty('overflow');
     return svgElement;
   };
 
   const getBase64SVG = (svg?: SVGSVGElement, width?: number, height?: number): string => {
     if (svg) {
       svg = svg.cloneNode(true) as SVGSVGElement;
+      svg.style.removeProperty('display');
+      svg.style.removeProperty('width');
+      svg.style.removeProperty('height');
+      svg.style.removeProperty('max-width');
+      svg.style.removeProperty('overflow');
     }
     if (height) {
       svg?.setAttribute('height', `${height}px`);

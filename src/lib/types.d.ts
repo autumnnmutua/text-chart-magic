@@ -33,6 +33,8 @@ export interface State {
   loader?: LoaderConfig;
   visualStyles?: Record<string, VisualStyle>;
   visualPositions?: Record<string, VisualPosition>;
+  visualLayers?: Record<string, VisualLayerState>;
+  snapToGrid?: boolean;
 }
 
 export interface VisualPosition {
@@ -45,6 +47,12 @@ export interface VisualStyle {
   fill?: string;
   stroke?: string;
   text?: string;
+}
+
+export interface VisualLayerState {
+  hidden?: boolean;
+  locked?: boolean;
+  zIndex?: number;
 }
 
 export interface ValidatedState extends State {

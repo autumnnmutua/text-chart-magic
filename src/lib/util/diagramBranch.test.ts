@@ -479,6 +479,25 @@ describe('special diagram branch strategies', () => {
     await expect(parse(removed)).resolves.toBeDefined();
   });
 
+  it('deletes a C4 relation selected through its generated visual text id', async () => {
+    const initial = `C4Container
+    System_Boundary(order, "订单系统") {
+      Container(api, "订单 API", "Node", "处理订单")
+    }
+    System_Ext(pay, "支付平台")
+    Rel(api, pay, "调用支付")`;
+    const removed =
+      removeDiagramElementCode(initial, {
+        sourceId: 'text-23',
+        styleId: 'text-23',
+        text: '调用支付'
+      }) ?? '';
+    expect(removed).toContain('Container(api');
+    expect(removed).toContain('System_Ext(pay');
+    expect(removed).not.toContain('Rel(api, pay');
+    await expect(parse(removed)).resolves.toBeDefined();
+  });
+
   it('deletes original C4 elements through labels, descriptions, or generated category text', async () => {
     const initial = `C4Component
     Person(user, "用户", "发起请求")
