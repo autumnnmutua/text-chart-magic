@@ -77,9 +77,12 @@ export type VisualConnectionLineStyle = 'dashed' | 'solid';
 export interface VisualConnection {
   direction: VisualConnectionDirection;
   id: string;
+  labelBackground?: string;
+  labelColor?: string;
   label: string;
   lineStyle: VisualConnectionLineStyle;
   source: VisualConnectionEndpoint;
+  stroke?: string;
   strokeWidth: number;
   target: VisualConnectionEndpoint;
 }

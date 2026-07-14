@@ -1,4 +1,5 @@
 import { getDiagramKeyword } from './diagramBranch';
+import { ARCHITECTURE_GROUP_PREFIX, removeArchitectureGroupCode } from './architectureGroups';
 import { getBlockEdges, getBlockEdgeStyleId } from './blockFreeLayout';
 
 export interface VisualTextTarget {
@@ -1097,7 +1098,13 @@ export const removeDiagramElementCode = (
   if (keyword === 'xychart-beta') return removeXYDimension(code, target);
   if (keyword === 'requirementdiagram') return removeRequirementBlock(code, target);
   if (keyword.startsWith('c4')) return removeC4Element(code, target);
-  if (keyword === 'architecture-beta') return removeArchitectureElement(code, target);
+  if (keyword === 'architecture-beta') {
+    const groupId = [target.sourceId, target.styleId].find((id) =>
+      id?.startsWith(ARCHITECTURE_GROUP_PREFIX)
+    );
+    if (groupId) return removeArchitectureGroupCode(code, groupId);
+    return removeArchitectureElement(code, target);
+  }
   if (keyword === 'venn-beta') return removeVennElement(code, target);
   if (keyword === 'gitgraph') return removeGitElement(code, target);
   if (keyword === 'erdiagram') return removeERElement(code, target);

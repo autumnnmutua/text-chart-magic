@@ -25,4 +25,29 @@ describe('visualStyle', () => {
     expect(handle.style.fill).toBe('transparent');
     expect(handle.style.stroke).toBe('transparent');
   });
+
+  it('colors architecture group outlines without filling their interaction layer', () => {
+    const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    const hit = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    hit.dataset.architectureGroupHit = 'true';
+    hit.style.fill = 'none';
+    hit.style.stroke = 'transparent';
+    const border = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    border.dataset.architectureGroupBorder = 'true';
+    const title = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    title.textContent = '业务服务';
+    group.append(hit, border, title);
+
+    applyVisualStyleToElement(group, {
+      fill: '#ff0000',
+      stroke: '#00ff00',
+      text: '#0000ff'
+    });
+
+    expect(hit.style.fill).toBe('none');
+    expect(hit.style.stroke).toBe('transparent');
+    expect(border.style.fill).toBe('none');
+    expect(border.style.stroke).toBe('rgb(0, 255, 0)');
+    expect(title.style.fill).toBe('rgb(0, 0, 255)');
+  });
 });

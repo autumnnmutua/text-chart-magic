@@ -1,6 +1,8 @@
 <script lang="ts">
   import { addManualEntry } from '$lib/components/History/historyState.svelte';
   import CommandPalette from '$lib/components/workspace/CommandPalette.svelte';
+  import ArchitectureGroupToolbar from '$lib/components/workspace/ArchitectureGroupToolbar.svelte';
+  import DiagramNotice from '$lib/components/workspace/DiagramNotice.svelte';
   import MobileEditToolbar from '$lib/components/workspace/MobileEditToolbar.svelte';
   import WorkspacePanelHost from '$lib/components/workspace/WorkspacePanelHost.svelte';
   import ColorPickerPanel from '$lib/components/ColorPickerPanel.svelte';
@@ -28,11 +30,13 @@
     inputState,
     redoLastEdit,
     resetToDefaultGraph,
+    addArchitectureGroup,
     setSnapToGrid,
     undoLastEdit,
     validatedState
   } from '$lib/util/state.svelte';
   import { visualDocument } from '$lib/util/visualDocument.svelte';
+  import { getDiagramKeyword } from '$lib/util/diagramBranch';
   import {
     clearVisualSelection,
     openVisualColorPanel,
@@ -80,6 +84,11 @@
     openWorkspacePanel('layers');
   };
 
+  const openCode = (): void => {
+    closeGlobalSearch();
+    openWorkspacePanel('code');
+  };
+
   const resetDiagram = (): void => {
     clearVisualSelection();
     resetToDefaultGraph();
@@ -111,6 +120,20 @@
   onMount(() => {
     const modifier = shortcutModifier();
     const unregister = registerWorkspaceCommands('workspace', [
+      {
+        category: '编辑',
+        disabledReason: () => '请先切换到架构图。',
+        id: 'architecture-group',
+        isEnabled: () => getDiagramKeyword(validatedState.current.code) === 'architecture-beta',
+        label: '添加虚线分组框',
+        run: () => addArchitectureGroup()
+      },
+      {
+        category: '编辑',
+        id: 'code',
+        label: '查看和编辑图表代码',
+        run: openCode
+      },
       {
         category: '编辑',
         id: 'undo',
@@ -379,6 +402,8 @@
 </script>
 
 <CommandPalette />
+<DiagramNotice />
+<ArchitectureGroupToolbar />
 <WorkspacePanelHost {isMobile} />
 {#if isMobile}
   <MobileEditToolbar {onOpenHistory} />

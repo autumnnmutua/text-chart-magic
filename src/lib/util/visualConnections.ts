@@ -61,8 +61,30 @@ export interface VisualConnectionRenderOptions {
   showAnchors?: boolean;
 }
 
+export type VisualConnectionAppearance = Pick<
+  VisualConnection,
+  'direction' | 'labelBackground' | 'labelColor' | 'lineStyle' | 'stroke' | 'strokeWidth'
+>;
+
+const DEFAULT_CONNECTION_APPEARANCE: VisualConnectionAppearance = {
+  direction: 'forward',
+  labelBackground: '#fff7ed',
+  labelColor: '#431407',
+  lineStyle: 'solid',
+  stroke: '#ea580c',
+  strokeWidth: 2
+};
+
 const isFiniteNumber = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value);
+
+const normalizeColor = (value: unknown): string | undefined => {
+  if (typeof value !== 'string') return undefined;
+  const color = value.trim();
+  return /^(?:#[\da-f]{3,8}|(?:rgb|hsl)a?\([\d\s.,%+-]+\)|currentColor)$/i.test(color)
+    ? color
+    : undefined;
+};
 
 const normalizeEndpoint = (value: unknown): VisualConnectionEndpoint | undefined => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
@@ -101,15 +123,21 @@ export const normalizeVisualConnections = (value: unknown): State['visualConnect
     const direction = ['both', 'forward', 'none'].includes(String(candidate.direction))
       ? (candidate.direction as VisualConnection['direction'])
       : 'forward';
+    const labelBackground = normalizeColor(candidate.labelBackground);
+    const labelColor = normalizeColor(candidate.labelColor);
+    const stroke = normalizeColor(candidate.stroke);
     connections[id] = {
       direction,
       id,
+      ...(labelBackground ? { labelBackground } : {}),
+      ...(labelColor ? { labelColor } : {}),
       label:
         typeof candidate.label === 'string'
           ? candidate.label.slice(0, 240)
           : DEFAULT_CONNECTION_LABEL,
       lineStyle: candidate.lineStyle === 'dashed' ? 'dashed' : 'solid',
       source,
+      ...(stroke ? { stroke } : {}),
       strokeWidth: isFiniteNumber(candidate.strokeWidth)
         ? Math.min(Math.max(candidate.strokeWidth, 1), 8)
         : 2,
@@ -130,16 +158,78 @@ export const createVisualConnectionId = (): string => {
 export const createVisualConnection = (
   source: VisualConnectionEndpoint,
   target: VisualConnectionEndpoint,
-  id = createVisualConnectionId()
+  id = createVisualConnectionId(),
+  appearance: Partial<VisualConnectionAppearance> = {}
 ): VisualConnection => ({
-  direction: 'forward',
+  ...DEFAULT_CONNECTION_APPEARANCE,
+  ...appearance,
+  direction: appearance.direction ?? DEFAULT_CONNECTION_APPEARANCE.direction,
   id,
   label: DEFAULT_CONNECTION_LABEL,
-  lineStyle: 'solid',
+  lineStyle: appearance.lineStyle ?? DEFAULT_CONNECTION_APPEARANCE.lineStyle,
   source: { ...source },
-  strokeWidth: 2,
+  strokeWidth: appearance.strokeWidth ?? DEFAULT_CONNECTION_APPEARANCE.strokeWidth,
   target: { ...target }
 });
+
+const connectionAppearance = (connection: VisualConnection): VisualConnectionAppearance => ({
+  direction: connection.direction,
+  labelBackground: connection.labelBackground ?? DEFAULT_CONNECTION_APPEARANCE.labelBackground,
+  labelColor: connection.labelColor ?? DEFAULT_CONNECTION_APPEARANCE.labelColor,
+  lineStyle: connection.lineStyle,
+  stroke: connection.stroke ?? DEFAULT_CONNECTION_APPEARANCE.stroke,
+  strokeWidth: connection.strokeWidth
+});
+
+const readableStroke = (element: SVGElement): string | undefined => {
+  const attribute = normalizeColor(element.getAttribute('stroke'));
+  if (attribute && attribute !== 'currentColor') return attribute;
+  if (typeof getComputedStyle !== 'function') return attribute;
+  const computed = normalizeColor(getComputedStyle(element).stroke);
+  return computed && computed !== 'currentColor' ? computed : attribute;
+};
+
+export const inferVisualConnectionAppearance = (
+  svg: SVGSVGElement,
+  connections: State['visualConnections'],
+  sourceElementId = ''
+): VisualConnectionAppearance => {
+  const existing = Object.values(connections ?? {});
+  const related = existing.find(
+    ({ source, target }) =>
+      sourceElementId &&
+      (source.elementId === sourceElementId || target.elementId === sourceElementId)
+  );
+  if (related) return connectionAppearance(related);
+  if (existing[0]) return connectionAppearance(existing[0]);
+
+  const nativePath = [
+    ...svg.querySelectorAll<SVGElement>('path.flowchart-link, g.edgePath path, line')
+  ].find(
+    (element) =>
+      !element.closest('[data-visual-connection]') &&
+      element.getAttribute('stroke') !== 'transparent'
+  );
+  if (!nativePath) return { ...DEFAULT_CONNECTION_APPEARANCE };
+  const width = Number.parseFloat(
+    nativePath.getAttribute('stroke-width') ??
+      (typeof getComputedStyle === 'function' ? getComputedStyle(nativePath).strokeWidth : '')
+  );
+  const markerStart = nativePath.getAttribute('marker-start');
+  const markerEnd = nativePath.getAttribute('marker-end');
+  return {
+    ...DEFAULT_CONNECTION_APPEARANCE,
+    direction: markerStart && markerEnd ? 'both' : markerEnd ? 'forward' : 'none',
+    lineStyle:
+      nativePath.hasAttribute('stroke-dasharray') ||
+      (typeof getComputedStyle === 'function' &&
+        getComputedStyle(nativePath).strokeDasharray !== 'none')
+        ? 'dashed'
+        : 'solid',
+    stroke: readableStroke(nativePath) ?? DEFAULT_CONNECTION_APPEARANCE.stroke,
+    strokeWidth: Number.isFinite(width) ? Math.min(Math.max(width, 1), 8) : 2
+  };
+};
 
 const endpointLaneKey = (endpoint: VisualConnectionEndpoint): string =>
   endpoint.elementId && endpoint.anchor
@@ -357,7 +447,10 @@ const renderConnectionGroup = (
   path.dataset.connectionPath = 'true';
   path.setAttribute('d', routeToPathData(route));
   path.setAttribute('fill', 'none');
-  path.setAttribute('stroke', '#ea580c');
+  path.setAttribute(
+    'stroke',
+    connection.stroke ?? DEFAULT_CONNECTION_APPEARANCE.stroke ?? '#ea580c'
+  );
   path.setAttribute('stroke-linecap', 'round');
   path.setAttribute('stroke-linejoin', 'round');
   path.setAttribute('stroke-width', `${connection.strokeWidth}`);
@@ -377,8 +470,15 @@ const renderConnectionGroup = (
     label.dataset.connectionLabel = 'true';
     label.setAttribute('dominant-baseline', 'central');
     label.setAttribute('paint-order', 'stroke');
-    label.setAttribute('stroke', '#fff7ed');
+    label.setAttribute(
+      'stroke',
+      connection.labelBackground ?? DEFAULT_CONNECTION_APPEARANCE.labelBackground ?? '#fff7ed'
+    );
     label.setAttribute('stroke-width', '5');
+    label.setAttribute(
+      'fill',
+      connection.labelColor ?? DEFAULT_CONNECTION_APPEARANCE.labelColor ?? '#431407'
+    );
     label.setAttribute('text-anchor', 'middle');
     label.setAttribute('x', `${labelPoint.x}`);
     label.setAttribute('y', `${labelPoint.y}`);

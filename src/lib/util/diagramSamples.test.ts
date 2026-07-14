@@ -37,12 +37,12 @@ const branchTargets: Record<string, { label: string; sourceId?: string }> = {
 };
 
 const investorTargets: Record<string, { label: string; sourceId?: string }> = {
+  'AI 产品工作流': { label: 'AI 编排引擎', sourceId: 'agent' },
   'C4 系统关系图': { label: '业务 API', sourceId: 'api' },
   'SaaS 产品系统架构': { label: '核心业务服务', sourceId: 'core' },
   创业产品路线图: { label: '核心功能开发' },
   市场机会矩阵: { label: '自然语言生成图表' },
-  用户增长旅程: { label: '创建第一张图表' },
-  自由块图与箭头展示: { label: '产品方案', sourceId: 'product' }
+  用户增长旅程: { label: '创建第一张图表' }
 };
 
 describe('localizedDiagramSamples', () => {
@@ -101,7 +101,7 @@ describe('investorSamples', () => {
     }
   }, 30_000);
 
-  it('keeps the free-arrow showcase in the same persisted state model as user work', () => {
+  it('keeps the AI workflow arrows in the same persisted state model as user work', () => {
     const sample = investorSamples.find(({ diagramType }) => diagramType === 'Block');
     expect(sample).toBeDefined();
     const normalized = normalizeState({
@@ -110,11 +110,9 @@ describe('investorSamples', () => {
       rough: false,
       updateDiagram: true
     });
-    expect(Object.keys(normalized.visualConnections ?? {})).toHaveLength(6);
-    expect(normalized.visualConnections?.['connection-showcase-3'].direction).toBe('both');
-    expect(
-      normalized.visualConnections?.['connection-showcase-free'].source.elementId
-    ).toBeUndefined();
+    expect(Object.keys(normalized.visualConnections ?? {})).toHaveLength(8);
+    expect(normalized.visualConnections?.['connection-ai-4'].stroke).toBe('#0f766e');
+    expect(normalized.visualConnections?.['connection-ai-loop'].source.elementId).toBe('feedback');
   });
 
   it('keeps every showcase source-editable and safely expandable', async () => {

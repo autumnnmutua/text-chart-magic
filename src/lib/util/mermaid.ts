@@ -4,6 +4,7 @@ import tidyTreeLayouts from '@mermaid-js/layout-tidy-tree';
 import zenuml from '@mermaid-js/mermaid-zenuml';
 import type { MermaidConfig, RenderResult } from 'mermaid';
 import mermaid from 'mermaid';
+import { prepareQuadrantCode } from './quadrantLayout';
 
 mermaid.registerLayoutLoaders([...elkLayouts, ...tidyTreeLayouts]);
 const init = mermaid.registerExternalDiagrams([zenuml]);
@@ -80,7 +81,8 @@ const prepareSankeyCode = (source: string) => {
 };
 
 const prepareDiagramCode = (source: string) => {
-  const architecture = prepareArchitectureCode(source);
+  const quadrant = prepareQuadrantCode(source);
+  const architecture = prepareArchitectureCode(quadrant);
   const wardley = prepareWardleyCode(architecture.code);
   const sankey = prepareSankeyCode(wardley.code);
   return {

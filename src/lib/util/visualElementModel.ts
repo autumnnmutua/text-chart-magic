@@ -8,6 +8,7 @@ import { collectEditableSourceText, normalizeVisibleText } from './visualTextEdi
 
 const semanticSelector = [
   'g[data-visual-connection]',
+  'g[data-architecture-group-id]',
   'g[data-c4-id]',
   'g[data-architecture-id]',
   'g.node[data-style-id]',
@@ -45,6 +46,7 @@ const sourceIdFromNode = (node: Element): string => {
   const styleId = node.getAttribute('data-style-id') ?? '';
   return (
     (node.getAttribute('data-visual-connection') ? node.getAttribute('data-visual-id') : '') ||
+    node.getAttribute('data-architecture-group-id') ||
     getC4NodeId(node) ||
     getArchitectureNodeId(node) ||
     parseRenderedSourceId(nodeId) ||
@@ -188,6 +190,7 @@ const labelFromElement = (element: Element): string => {
 };
 
 const kindFromElement = (element: Element): VisualDocumentItem['kind'] => {
+  if (element.matches('[data-architecture-group-id]')) return 'container';
   if (
     element.matches('[data-visual-connection]') ||
     element.matches(

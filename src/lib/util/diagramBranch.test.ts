@@ -26,6 +26,81 @@ const requireRange = (range: ReturnType<typeof findVisibleTextRange>) => {
 };
 
 describe('special diagram branch strategies', () => {
+  it('adds a card from the generic branch action in legacy Kanban source', () => {
+    const result = createDiagramBranch({
+      code: 'kanban\r\n  待办\r\n      [任务A]',
+      label: '任务A'
+    });
+
+    expect(result?.code).toContain('card1[新卡片]');
+  });
+
+  it('keeps Kanban columns, cards and checklist items semantically distinct', async () => {
+    const initial = `kanban
+  backlog[待规划]
+    research[用户研究]
+  doing[进行中]
+    build[功能开发]
+`;
+    const card = createDiagramBranch({ code: initial, label: '待规划', mode: 'card' });
+    expect(card?.code).toContain('card1[新卡片]');
+    const checklist = createDiagramBranch({
+      code: card?.code ?? initial,
+      label: '用户研究',
+      mode: 'checklist'
+    });
+    expect(checklist?.code).toContain('research_check1[☐ 检查项]');
+    const column = createDiagramBranch({
+      code: checklist?.code ?? initial,
+      label: '进行中',
+      mode: 'column'
+    });
+    expect(column?.code).toContain('column1[新看板列]');
+    await expect(parse(column?.code ?? '')).resolves.toBeDefined();
+  });
+
+  it('moves a Kanban card between columns without changing it into a column', async () => {
+    const initial = `kanban
+  backlog[待规划]
+    research[用户研究]
+  doing[进行中]
+    build[功能开发]
+`;
+    const moved = moveDiagramElementCode(initial, '用户研究', '进行中');
+    expect(moved).toMatch(/doing\[进行中\][\s\S]*\n {4}research\[用户研究\]/);
+    expect(moved).not.toMatch(/^\s{2}research\[用户研究\]/m);
+    await expect(parse(moved ?? '')).resolves.toBeDefined();
+  });
+
+  it('adds fishbone causes at the correct causal depth', async () => {
+    const initial = `ishikawa-beta
+  订单延迟
+  流程
+    审批过多
+`;
+    const primary = createDiagramBranch({ code: initial, label: '订单延迟' });
+    expect(primary?.code).toMatch(/^ {2}新分支$/m);
+    const secondary = createDiagramBranch({ code: primary?.code ?? initial, label: '流程' });
+    expect(secondary?.code).toMatch(/^ {4}新分支 2$/m);
+    const tertiary = createDiagramBranch({
+      code: secondary?.code ?? initial,
+      label: '审批过多'
+    });
+    expect(tertiary?.code).toMatch(/^ {6}新分支 3$/m);
+    await expect(parse(tertiary?.code ?? '')).resolves.toBeDefined();
+  });
+
+  it('reports live pie totals and quadrant range behavior after adding items', () => {
+    const pie = createDiagramBranch({ code: 'pie\n  "A" : 4', label: 'A' });
+    expect(pie?.notice).toContain('默认数值为 1');
+    expect(pie?.notice).toContain('当前总数值为：5');
+    const quadrant = createDiagramBranch({
+      code: 'quadrantChart\n  A: [0.5, 0.5]',
+      label: 'A'
+    });
+    expect(quadrant?.notice).toContain('接近边界时图表会自动扩展');
+  });
+
   it('does not report a fake branch when the diagram or target is unsupported', () => {
     expect(createDiagramBranch({ code: 'info\n  showInfo', label: '不存在' })).toBeUndefined();
     expect(

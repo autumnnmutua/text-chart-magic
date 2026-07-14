@@ -7,7 +7,7 @@ const renderedLabelByTitle: Record<string, string> = {
   创业产品路线图: '核心功能开发',
   市场机会矩阵: '自然语言生成图表',
   用户增长旅程: '创建第一张图表',
-  自由块图与箭头展示: '用户研究'
+  'AI 产品工作流': 'AI 编排引擎'
 };
 
 test.describe('精选示例', () => {
@@ -41,17 +41,17 @@ test.describe('精选示例', () => {
     }
   });
 
-  test('自由块图保留可编辑箭头，并能整体重置为模板状态', async ({ page }) => {
+  test('AI 产品工作流保留可编辑箭头，并能整体重置为模板状态', async ({ page }) => {
     await page.goto('/');
-    await page.getByRole('button', { name: '自由块图与箭头展示', exact: true }).click();
+    await page.getByRole('button', { name: 'AI 产品工作流', exact: true }).click();
     const arrows = page.locator('#view g[data-visual-connection]');
-    await expect(arrows).toHaveCount(6);
+    await expect(arrows).toHaveCount(8);
 
-    await arrows.filter({ hasText: '实验反馈' }).click();
+    await arrows.filter({ hasText: '持续优化' }).click();
     await page.getByTestId('connection-toolbar').getByRole('button', { name: '删除箭头' }).click();
-    await expect(arrows).toHaveCount(5);
+    await expect(arrows).toHaveCount(7);
     await page.getByRole('button', { name: '重置', exact: true }).click();
-    await expect(arrows).toHaveCount(6);
-    await expect(arrows.filter({ hasText: '实验反馈' })).toBeVisible();
+    await expect(arrows).toHaveCount(8);
+    await expect(arrows.filter({ hasText: '持续优化' })).toBeVisible();
   });
 });

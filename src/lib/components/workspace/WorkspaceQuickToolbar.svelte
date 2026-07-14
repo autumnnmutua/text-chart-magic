@@ -7,10 +7,20 @@
     startConnectionCreation
   } from '$lib/util/connectionEditor.svelte';
   import { openCommandPalette } from '$lib/util/commandRegistry.svelte';
+  import { getDiagramKeyword } from '$lib/util/diagramBranch';
   import { closeGlobalSearch, openGlobalSearch } from '$lib/util/globalSearch.svelte';
   import { setSelectionMode, visualSelection } from '$lib/util/visualSelection.svelte';
+  import { addArchitectureGroup, validatedState } from '$lib/util/state.svelte';
   import { openWorkspacePanel, toggleWorkspacePanel } from '$lib/util/workspacePanels.svelte';
-  import { ArrowUpRight, Command, Layers, ListChecks, Search } from 'lucide-svelte';
+  import {
+    ArrowUpRight,
+    BoxSelect,
+    Code2,
+    Command,
+    Layers,
+    ListChecks,
+    Search
+  } from 'lucide-svelte';
 
   const openSearch = (): void => {
     openGlobalSearch();
@@ -25,6 +35,24 @@
 
 <div class="pointer-events-auto absolute top-2 left-2 z-20" data-testid="workspace-quick-toolbar">
   <FloatingToolbar>
+    <Button
+      size="icon"
+      variant="ghost"
+      title="查看和编辑代码"
+      aria-label="查看和编辑代码"
+      onclick={() => openWorkspacePanel('code')}>
+      <Code2 class="size-4" />
+    </Button>
+    {#if getDiagramKeyword(validatedState.current.code) === 'architecture-beta'}
+      <Button
+        size="icon"
+        variant="ghost"
+        title="添加虚线分组框"
+        aria-label="添加虚线分组框"
+        onclick={addArchitectureGroup}>
+        <BoxSelect class="size-4" />
+      </Button>
+    {/if}
     <Button size="icon" variant="ghost" title="全局搜索" aria-label="全局搜索" onclick={openSearch}>
       <Search class="size-4" />
     </Button>

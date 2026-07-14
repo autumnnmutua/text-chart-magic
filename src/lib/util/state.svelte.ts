@@ -18,6 +18,11 @@ import {
 } from './errorHandling';
 import { defaultMermaidConfig, parse } from './mermaid';
 import {
+  createArchitectureGroup,
+  upsertArchitectureGroupCode,
+  type ArchitectureGroup
+} from './architectureGroups';
+import {
   createBlockArrowCode,
   createDiagramBranch,
   createDiagramBranchCode,
@@ -28,6 +33,7 @@ import {
   type PacketFieldSize
 } from './diagramBranch';
 import { diagramStateKey } from './diagramStateKey';
+import { showDiagramNotice } from './diagramNotice.svelte';
 import { notify } from './notify';
 import { readJSON, writeJSON } from './persist.svelte';
 import { deserializeState, serializeState } from './serde';
@@ -707,6 +713,7 @@ export const addDiagramBranch = ({
   sourceId?: string;
 }): boolean => {
   let didAdd = false;
+  let notice = '';
   update((state) => {
     const result = createDiagramBranch({ code: state.code, label, mode, sourceId });
     if (!result) {
@@ -718,11 +725,79 @@ export const addDiagramBranch = ({
       optimizeFlowchartLayout(state);
     }
     state.updateDiagram = true;
-    if (result.notice) notify(result.notice);
+    notice = result.notice ?? '';
     didAdd = true;
   });
 
+  if (notice) showDiagramNotice(notice);
+
   return didAdd;
+};
+
+export const addArchitectureGroup = (): ArchitectureGroup | undefined => {
+  let created: ArchitectureGroup | undefined;
+  update((state) => {
+    if (getDiagramKeyword(state.code) !== 'architecture-beta') return false;
+    created = createArchitectureGroup(state.code);
+    pushUndoFor(state, 'branch');
+    state.code = upsertArchitectureGroupCode(state.code, created);
+    state.updateDiagram = true;
+  });
+  return created;
+};
+
+export const updateArchitectureGroup = (
+  group: ArchitectureGroup,
+  positionUpdates: Record<string, NonNullable<State['visualPositions']>[string]> = {}
+): boolean => {
+  let changed = false;
+  update((state) => {
+    const nextCode = upsertArchitectureGroupCode(state.code, group);
+    const nextPositions = normalizeVisualPositions({
+      ...(state.visualPositions ?? {}),
+      ...positionUpdates
+    });
+    if (
+      nextCode === state.code &&
+      JSON.stringify(nextPositions ?? {}) === JSON.stringify(state.visualPositions ?? {})
+    ) {
+      return false;
+    }
+    pushUndoFor(state, 'batch');
+    state.code = nextCode;
+    if (nextPositions) state.visualPositions = nextPositions;
+    else delete state.visualPositions;
+    state.updateDiagram = true;
+    changed = true;
+  });
+  return changed;
+};
+
+export const updateArchitectureGroups = (
+  groups: readonly ArchitectureGroup[],
+  positionUpdates: Record<string, NonNullable<State['visualPositions']>[string]> = {}
+): boolean => {
+  let changed = false;
+  update((state) => {
+    const nextCode = groups.reduce(upsertArchitectureGroupCode, state.code);
+    const nextPositions = normalizeVisualPositions({
+      ...(state.visualPositions ?? {}),
+      ...positionUpdates
+    });
+    if (
+      nextCode === state.code &&
+      JSON.stringify(nextPositions ?? {}) === JSON.stringify(state.visualPositions ?? {})
+    ) {
+      return false;
+    }
+    pushUndoFor(state, 'batch');
+    state.code = nextCode;
+    if (nextPositions) state.visualPositions = nextPositions;
+    else delete state.visualPositions;
+    state.updateDiagram = true;
+    changed = true;
+  });
+  return changed;
 };
 
 const cleanVisualMetadata = (

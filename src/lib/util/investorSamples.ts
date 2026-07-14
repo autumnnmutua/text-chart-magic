@@ -178,77 +178,120 @@ export const investorSamples: InvestorSample[] = [
   },
   {
     diagramType: 'Block',
-    title: '自由块图与箭头展示',
+    title: 'AI 产品工作流',
     state: {
       code: `block-beta
-  columns 5
-  research["用户研究"] space product["产品方案"] space launch["市场发布"]
-  space:5
-  data[("数据洞察")] space engine["增长引擎"] space revenue["商业收入"]
+  columns 4
+  brief["业务需求"] knowledge[("知识与数据")] agent["AI 编排引擎"] review["人工审核"]
+  feedback["效果反馈"] observe["质量监控"] delivery["多渠道交付"] guard["安全护栏"]
 `,
       visualConnections: {
-        'connection-showcase-1': {
+        'connection-ai-1': {
           direction: 'forward',
-          id: 'connection-showcase-1',
-          label: '形成洞察',
+          id: 'connection-ai-1',
+          label: '明确目标',
+          labelBackground: '#f8fafc',
+          labelColor: '#334155',
           lineStyle: 'solid',
-          source: { anchor: 'right', elementId: 'research', x: 120, y: 80 },
+          source: { anchor: 'right', elementId: 'brief', x: 0, y: 0 },
+          stroke: '#475569',
           strokeWidth: 2,
-          target: { anchor: 'left', elementId: 'product', x: 300, y: 80 }
+          target: { anchor: 'left', elementId: 'knowledge', x: 0, y: 0 }
         },
-        'connection-showcase-2': {
+        'connection-ai-2': {
           direction: 'forward',
-          id: 'connection-showcase-2',
-          label: '验证发布',
+          id: 'connection-ai-2',
+          label: '检索上下文',
+          labelBackground: '#f8fafc',
+          labelColor: '#334155',
           lineStyle: 'solid',
-          source: { anchor: 'right', elementId: 'product', x: 400, y: 80 },
+          source: { anchor: 'right', elementId: 'knowledge', x: 0, y: 0 },
+          stroke: '#475569',
           strokeWidth: 2,
-          target: { anchor: 'left', elementId: 'launch', x: 580, y: 80 }
+          target: { anchor: 'left', elementId: 'agent', x: 0, y: 0 }
         },
-        'connection-showcase-3': {
-          direction: 'both',
-          id: 'connection-showcase-3',
-          label: '实验反馈',
-          lineStyle: 'dashed',
-          source: { anchor: 'right', elementId: 'data', x: 120, y: 220 },
-          strokeWidth: 3,
-          target: { anchor: 'left', elementId: 'engine', x: 300, y: 220 }
-        },
-        'connection-showcase-4': {
+        'connection-ai-3': {
           direction: 'forward',
-          id: 'connection-showcase-4',
-          label: '规模增长',
+          id: 'connection-ai-3',
+          label: '生成方案',
+          labelBackground: '#f8fafc',
+          labelColor: '#334155',
           lineStyle: 'solid',
-          source: { anchor: 'right', elementId: 'engine', x: 400, y: 220 },
+          source: { anchor: 'right', elementId: 'agent', x: 0, y: 0 },
+          stroke: '#475569',
           strokeWidth: 2,
-          target: { anchor: 'left', elementId: 'revenue', x: 580, y: 220 }
+          target: { anchor: 'left', elementId: 'review', x: 0, y: 0 }
         },
-        'connection-showcase-5': {
+        'connection-ai-4': {
           direction: 'forward',
-          id: 'connection-showcase-5',
-          label: '效果回流',
-          lineStyle: 'dashed',
-          source: { anchor: 'bottom', elementId: 'launch', x: 620, y: 130 },
+          id: 'connection-ai-4',
+          label: '审核通过',
+          labelBackground: '#f8fafc',
+          labelColor: '#334155',
+          lineStyle: 'solid',
+          source: { anchor: 'bottom', elementId: 'review', x: 0, y: 0 },
+          stroke: '#0f766e',
           strokeWidth: 2,
-          target: { anchor: 'top', elementId: 'revenue', x: 620, y: 190 }
+          target: { anchor: 'top', elementId: 'guard', x: 0, y: 0 }
         },
-        'connection-showcase-free': {
-          direction: 'none',
-          id: 'connection-showcase-free',
-          label: '外部信号',
-          lineStyle: 'dashed',
-          source: { x: 100, y: 0 },
+        'connection-ai-5': {
+          direction: 'forward',
+          id: 'connection-ai-5',
+          label: '合规发布',
+          labelBackground: '#f8fafc',
+          labelColor: '#334155',
+          lineStyle: 'solid',
+          source: { anchor: 'left', elementId: 'guard', x: 0, y: 0 },
+          stroke: '#0f766e',
           strokeWidth: 2,
-          target: { anchor: 'top', elementId: 'data', x: 60, y: 220 }
+          target: { anchor: 'right', elementId: 'delivery', x: 0, y: 0 }
+        },
+        'connection-ai-6': {
+          direction: 'forward',
+          id: 'connection-ai-6',
+          label: '运行指标',
+          labelBackground: '#f8fafc',
+          labelColor: '#334155',
+          lineStyle: 'solid',
+          source: { anchor: 'left', elementId: 'delivery', x: 0, y: 0 },
+          stroke: '#475569',
+          strokeWidth: 2,
+          target: { anchor: 'right', elementId: 'observe', x: 0, y: 0 }
+        },
+        'connection-ai-7': {
+          direction: 'forward',
+          id: 'connection-ai-7',
+          label: '持续优化',
+          labelBackground: '#f8fafc',
+          labelColor: '#334155',
+          lineStyle: 'dashed',
+          source: { anchor: 'left', elementId: 'observe', x: 0, y: 0 },
+          stroke: '#d97706',
+          strokeWidth: 2,
+          target: { anchor: 'right', elementId: 'feedback', x: 0, y: 0 }
+        },
+        'connection-ai-loop': {
+          direction: 'forward',
+          id: 'connection-ai-loop',
+          label: '新一轮需求',
+          labelBackground: '#f8fafc',
+          labelColor: '#334155',
+          lineStyle: 'dashed',
+          source: { anchor: 'top', elementId: 'feedback', x: 0, y: 0 },
+          stroke: '#d97706',
+          strokeWidth: 2,
+          target: { anchor: 'bottom', elementId: 'brief', x: 0, y: 0 }
         }
       },
       visualStyles: {
-        data: { fill: '#fff7ed', stroke: '#f97316', text: '#431407' },
-        engine: { fill: '#ffedd5', stroke: '#ea580c', text: '#431407' },
-        launch: { fill: '#ffffff', stroke: '#fb923c', text: '#431407' },
-        product: { fill: '#ffedd5', stroke: '#f97316', text: '#431407' },
-        research: { fill: '#ffffff', stroke: '#fb923c', text: '#431407' },
-        revenue: { fill: '#fed7aa', stroke: '#ea580c', text: '#431407' }
+        agent: { fill: '#dbeafe', stroke: '#2563eb', text: '#172554' },
+        brief: { fill: '#f1f5f9', stroke: '#64748b', text: '#0f172a' },
+        delivery: { fill: '#ecfdf5', stroke: '#0f766e', text: '#064e3b' },
+        feedback: { fill: '#fffbeb', stroke: '#d97706', text: '#78350f' },
+        guard: { fill: '#ecfdf5', stroke: '#0f766e', text: '#064e3b' },
+        knowledge: { fill: '#f1f5f9', stroke: '#64748b', text: '#0f172a' },
+        observe: { fill: '#f8fafc', stroke: '#475569', text: '#0f172a' },
+        review: { fill: '#f8fafc', stroke: '#475569', text: '#0f172a' }
       }
     }
   }

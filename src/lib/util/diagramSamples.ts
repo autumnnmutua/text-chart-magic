@@ -27,6 +27,7 @@ export const localizedDiagramSamples: Record<string, SampleExample[]> = {
   gateway:R -- L:payment
   order:B -- T:database
   payment:B -- T:events
+  %% architecture-group {"auto":true,"height":180,"id":"architecture-group-business","label":"业务服务","memberIds":["order","payment"],"moveMembers":true,"width":320,"x":40,"y":40}
 `
     )
   ],

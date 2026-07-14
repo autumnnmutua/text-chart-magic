@@ -30,8 +30,17 @@ export const applyVisualStyleToElement = (element: Element, style: VisualStyle):
 
   for (const shape of shapes) {
     const shapeElement = shape as SVGElement;
-    if (shapeElement.matches('[data-connection-hit], [data-connection-handle]')) continue;
+    if (
+      shapeElement.matches(
+        '[data-connection-hit], [data-connection-handle], [data-architecture-group-hit], [data-architecture-group-resize]'
+      )
+    )
+      continue;
     shapeElement.style.stroke = stroke;
+    if (shapeElement.matches('[data-architecture-group-border]')) {
+      shapeElement.style.fill = 'none';
+      continue;
+    }
     if (!isEdge && shapeElement.tagName.toLowerCase() !== 'line') {
       shapeElement.style.fill = fill;
     }

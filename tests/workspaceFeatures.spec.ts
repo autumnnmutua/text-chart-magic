@@ -240,6 +240,9 @@ test.describe('统一工作区能力', () => {
           steps: 6
         }
       );
+      await expect
+        .poll(() => connection.locator('[data-connection-path]').getAttribute('d'))
+        .not.toBe(pathBeforeMove);
       await page.mouse.up();
     }
     await expect(connection.locator('[data-connection-path]')).not.toHaveAttribute(
@@ -249,6 +252,32 @@ test.describe('统一工作区能力', () => {
     await page.reload();
     await waitForDiagram(page);
     await expect(page.locator('#view g[data-visual-connection]')).toContainText('异步调用');
+  });
+
+  test('代码工作台保留无效草稿，并把有效修改作为一次历史操作应用', async ({ page }) => {
+    await page.goto('/');
+    await waitForDiagram(page);
+    const originalText = '输入中文想法';
+    await page.getByRole('button', { name: '查看和编辑代码' }).click();
+    const workbench = page.getByTestId('code-workbench');
+    const editor = workbench.getByLabel('图表代码');
+    await expect(workbench).toBeVisible();
+
+    const validCode = await editor.inputValue();
+    const invalidCode = `${validCode}\n  broken[`;
+    await editor.fill(invalidCode);
+    await workbench.getByRole('button', { name: '应用修改' }).click();
+    await expect(workbench.getByRole('alert')).toBeVisible();
+    await expect(editor).toHaveValue(invalidCode);
+    await expect(page.locator('#view')).toContainText(originalText);
+
+    await workbench.getByRole('button', { name: '恢复有效版' }).click();
+    const updatedCode = validCode.replace(originalText, '代码工作台修改');
+    await editor.fill(updatedCode);
+    await workbench.getByRole('button', { name: '应用修改' }).click();
+    await expect(page.locator('#view')).toContainText('代码工作台修改');
+    await page.getByRole('button', { name: '撤回', exact: true }).click();
+    await expect(page.locator('#view')).toContainText(originalText);
   });
 
   test('自主箭头支持自由端、同节点锚点、取消、反向和完整历史', async ({ page }) => {
@@ -462,7 +491,7 @@ test.describe('统一工作区能力', () => {
     A["Child"]
   end`
     );
-    await page.getByTestId('workspace-quick-toolbar').locator('button').nth(1).click();
+    await page.getByRole('button', { name: '图层与大纲' }).click();
     let layers = page.getByTestId('layers-panel');
     const groupRow = layers
       .getByText('Group', { exact: true })
@@ -484,7 +513,7 @@ test.describe('统一工作区能力', () => {
     Container(api, "API", "Node", "Service")
   }`
     );
-    await page.getByTestId('workspace-quick-toolbar').locator('button').nth(1).click();
+    await page.getByRole('button', { name: '图层与大纲' }).click();
     layers = page.getByTestId('layers-panel');
     const apiRow = layers
       .locator('button[title*="API"]')
@@ -544,6 +573,10 @@ test.describe('统一工作区能力', () => {
       await mobileToolbar.getByRole('button', { name: '图层' }).click();
       await expect(page.getByTestId('layers-panel')).toBeVisible();
       await page.getByRole('button', { name: '关闭图层' }).click();
+      await mobileToolbar.getByRole('button', { name: '代码' }).click();
+      await expect(page.getByTestId('code-workbench')).toBeVisible();
+      await expect(page.getByTestId('code-workbench').getByLabel('图表代码')).toBeEditable();
+      await page.getByRole('button', { name: '关闭代码工作台' }).click();
 
       await page.getByRole('button', { name: '历史' }).click();
       await expect(page.getByRole('complementary', { name: '手机历史记录' })).toBeVisible();

@@ -19,6 +19,7 @@
   import { openWorkspacePanel } from '$lib/util/workspacePanels.svelte';
   import {
     ArrowUpRight,
+    Code2,
     Command,
     GitBranchPlus,
     History as HistoryIcon,
@@ -106,7 +107,7 @@
     </div>
   {/if}
   <nav
-    class="grid grid-cols-6 gap-1 rounded-md border border-border-dark bg-card p-1 shadow-xl"
+    class="grid grid-cols-7 gap-1 rounded-md border border-border-dark bg-card p-1 shadow-xl"
     aria-label="手机编辑工具">
     <Button
       class="h-12 flex-col gap-0 px-1 text-[11px]"
@@ -123,6 +124,13 @@
     <Button class="h-12 flex-col gap-0 px-1 text-[11px]" variant="ghost" onclick={openLayers}>
       <Layers class="size-4" />
       图层
+    </Button>
+    <Button
+      class="h-12 flex-col gap-0 px-1 text-[11px]"
+      variant="ghost"
+      onclick={() => openWorkspacePanel('code')}>
+      <Code2 class="size-4" />
+      代码
     </Button>
     <Button
       class="h-12 flex-col gap-0 px-1 text-[11px]"

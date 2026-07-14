@@ -4,7 +4,16 @@ const BRANCH_LABEL = '新分支';
 export interface DiagramBranchRequest {
   code: string;
   label?: string;
-  mode?: 'after' | 'before' | 'branch' | 'commit' | 'section' | 'split';
+  mode?:
+    | 'after'
+    | 'before'
+    | 'branch'
+    | 'card'
+    | 'checklist'
+    | 'column'
+    | 'commit'
+    | 'section'
+    | 'split';
   sourceId?: string;
 }
 
@@ -317,6 +326,99 @@ const addJourneyBranch: BranchStrategy = ({ code, label }) => {
     `    section ${branchLabel}`,
     `      ${branchLabel}内容: 5: 用户`
   );
+  return `${lines.join('\n')}\n`;
+};
+
+interface IndentedDiagramLine {
+  id: string;
+  indent: number;
+  label: string;
+  lineIndex: number;
+}
+
+const parseIndentedDiagramLines = (code: string): IndentedDiagramLine[] =>
+  code
+    .split('\n')
+    .map((line, lineIndex) => {
+      const match = line.match(/^(\s*)(?:([A-Za-z][\w-]*)\s*)?\[([^\]]+)\]/);
+      const bareCandidate = line.match(/^(\s{2})(\S.*)$/);
+      const bareColumn =
+        bareCandidate &&
+        !['[', ']', '{', '}', '@'].some((token) => bareCandidate[2].includes(token))
+          ? bareCandidate
+          : undefined;
+      if (!match && !bareColumn) return undefined;
+      return {
+        id: match?.[2] ?? '',
+        indent: (match?.[1] ?? bareColumn?.[1] ?? '').replaceAll('\t', '  ').length,
+        label: normalizeLabel(match?.[3] ?? bareColumn?.[2]),
+        lineIndex
+      };
+    })
+    .filter((line): line is IndentedDiagramLine => line !== undefined);
+
+const addKanbanBranch: BranchStrategy = ({ code, label, mode }) => {
+  const lines = code.trimEnd().split('\n');
+  const entries = parseIndentedDiagramLines(code);
+  const selected = entries.find(({ label: entryLabel }) => entryLabel === normalizeLabel(label));
+  if (normalizeLabel(label) && !selected) return undefined;
+
+  if (mode === 'column' || !selected) {
+    const id = getUniqueName(code, 'column').toLowerCase();
+    lines.push(`  ${id}[${getUniqueDisplayName(code, '新看板列')}]`);
+    return `${lines.join('\n')}\n`;
+  }
+
+  const columns = entries.filter(({ indent }) => indent === 2);
+  const parentColumn =
+    selected.indent === 2
+      ? selected
+      : [...columns].reverse().find(({ lineIndex }) => lineIndex < selected.lineIndex);
+  if (!parentColumn) return undefined;
+  const nextColumn = columns.find(({ lineIndex }) => lineIndex > parentColumn.lineIndex);
+  const columnEnd = nextColumn?.lineIndex ?? lines.length;
+  const baseId = mode === 'checklist' && selected.id ? `${selected.id}_check` : 'card';
+  const id = getUniqueName(code, baseId).toLowerCase();
+  const display =
+    mode === 'checklist'
+      ? getUniqueDisplayName(code, '检查项')
+      : getUniqueDisplayName(code, '新卡片');
+  const prefix = mode === 'checklist' ? '☐ ' : '';
+  const insertIndex = selected.indent > 2 ? selected.lineIndex + 1 : columnEnd;
+  lines.splice(insertIndex, 0, `    ${id}[${prefix}${display}]`);
+  return `${lines.join('\n')}\n`;
+};
+
+const addIshikawaBranch: BranchStrategy = ({ code, label }) => {
+  const lines = code.trimEnd().split('\n');
+  const diagramLine = lines.findIndex((line) => /^\s*ishikawa-beta\b/i.test(line));
+  const entries = lines
+    .map((line, lineIndex) => ({
+      indent: getIndentLength(line),
+      label: normalizeLabel(line),
+      lineIndex
+    }))
+    .filter(({ label: entryLabel, lineIndex }) => lineIndex > diagramLine && entryLabel);
+  const root = entries[0];
+  const selected = entries.find(({ label: entryLabel }) => entryLabel === normalizeLabel(label));
+  if (normalizeLabel(label) && !selected) return undefined;
+  const parent = selected ?? root;
+  if (!parent) return undefined;
+
+  const isRoot = parent.lineIndex === root.lineIndex;
+  const childIndent = isRoot ? root.indent : parent.indent + 2;
+  let insertIndex = parent.lineIndex + 1;
+  if (isRoot) {
+    insertIndex = lines.length;
+  } else {
+    while (
+      insertIndex < lines.length &&
+      (!lines[insertIndex].trim() || getIndentLength(lines[insertIndex]) > parent.indent)
+    ) {
+      insertIndex += 1;
+    }
+  }
+  lines.splice(insertIndex, 0, `${' '.repeat(childIndent)}${getUniqueLabel(code)}`);
   return `${lines.join('\n')}\n`;
 };
 
@@ -823,9 +925,8 @@ const strategies: Record<string, BranchStrategy> = {
   quadrantchart: ({ code, label }) =>
     insertNearLabelLine(code, label, `${getUniqueLabel(code)}: [0.75, 0.75]`),
   timeline: addTimelineBranch,
-  kanban: ({ code, label }) => insertNearLabelLine(code, label, `[${getUniqueLabel(code)}]`),
-  'ishikawa-beta': ({ code, label }) =>
-    insertNearLabelLine(code, label, getUniqueLabel(code), { asChild: true }),
+  kanban: addKanbanBranch,
+  'ishikawa-beta': addIshikawaBranch,
   'treeview-beta': ({ code, label }) =>
     insertNearLabelLine(code, label, `"${getUniqueLabel(code)}"`, { asChild: true }),
   'xychart-beta': addXYDimension,
@@ -852,10 +953,11 @@ export const createDiagramBranch = ({
   mode = 'branch',
   sourceId = ''
 }: DiagramBranchRequest): DiagramBranchResult | undefined => {
-  const keyword = getDiagramKeyword(code);
+  const normalizedCode = code.replace(/\r\n?/g, '\n');
+  const keyword = getDiagramKeyword(normalizedCode);
   const strategy = keyword.startsWith('c4') ? addC4Branch : strategies[keyword];
-  const nextCode = strategy?.({ code, label, mode, sourceId });
-  if (!nextCode || nextCode === code) return undefined;
+  const nextCode = strategy?.({ code: normalizedCode, label, mode, sourceId });
+  if (!nextCode || nextCode === normalizedCode) return undefined;
   const result: DiagramBranchResult = {
     code: nextCode,
     optimizeFlowchart: ['flowchart', 'flowchart-elk', 'flowchart-v2', 'graph'].includes(keyword)
@@ -865,11 +967,11 @@ export const createDiagramBranch = ({
       (sum, match) => sum + Number(match[1]),
       0
     );
-    result.notice = `饼图占比由左侧数值决定。你已新增一个分支，请在左侧数据面板中修改该分支的数值。当前总数值为：${total}。修改后，饼图会根据各项数值自动重新计算占比。`;
+    result.notice = `已新增一个饼图项目，默认数值为 1。饼图占比由左侧数据数值决定，请在左侧数据面板中修改该项目的数值。当前总数值为：${total}，修改后各项目占比将自动重新计算。`;
   }
   if (keyword === 'quadrantchart') {
     result.notice =
-      '已新增象限图元素。你可以拖动该元素调整它所在的象限位置，也可以在左侧面板修改名称、坐标或相关数据。元素位置会根据坐标或拖动结果同步更新。';
+      '已新增象限图元素。你可以直接拖动元素调整位置，也可以在左侧面板中修改名称和坐标。元素位置与坐标数据将同步更新，接近边界时图表会自动扩展。';
   }
   return result;
 };
@@ -912,6 +1014,49 @@ const moveLineByLabel = (code: string, sourceLabel: string, targetLabel: string)
   return `${lines.join('\n')}\n`;
 };
 
+const moveKanbanItem = (
+  code: string,
+  sourceLabel: string,
+  targetLabel: string
+): string | undefined => {
+  const lines = code.trimEnd().split('\n');
+  const entries = parseIndentedDiagramLines(code);
+  const source = entries.find(({ label }) => label === normalizeLabel(sourceLabel));
+  const target = entries.find(({ label }) => label === normalizeLabel(targetLabel));
+  if (!source || !target || source.lineIndex === target.lineIndex) return undefined;
+  const columns = entries.filter(({ indent }) => indent === 2);
+
+  if (source.indent === 2 && target.indent === 2) {
+    const sourceNext = columns.find(({ lineIndex }) => lineIndex > source.lineIndex)?.lineIndex;
+    const block = lines.splice(source.lineIndex, (sourceNext ?? lines.length) - source.lineIndex);
+    const targetIndex = parseIndentedDiagramLines(lines.join('\n')).find(
+      ({ indent, label }) => indent === 2 && label === target.label
+    )?.lineIndex;
+    if (targetIndex === undefined) return undefined;
+    lines.splice(targetIndex, 0, ...block);
+    return `${lines.join('\n')}\n`;
+  }
+  if (source.indent === 2) return undefined;
+
+  const [sourceLine] = lines.splice(source.lineIndex, 1);
+  const adjustedEntries = parseIndentedDiagramLines(lines.join('\n'));
+  const adjustedTarget = adjustedEntries.find(({ label }) => label === normalizeLabel(targetLabel));
+  if (!adjustedTarget) return undefined;
+  const adjustedColumns = adjustedEntries.filter(({ indent }) => indent === 2);
+  const targetColumn =
+    adjustedTarget.indent === 2
+      ? adjustedTarget
+      : [...adjustedColumns]
+          .reverse()
+          .find(({ lineIndex }) => lineIndex < adjustedTarget.lineIndex);
+  if (!targetColumn) return undefined;
+  const nextColumn = adjustedColumns.find(({ lineIndex }) => lineIndex > targetColumn.lineIndex);
+  const insertIndex =
+    adjustedTarget.indent > 2 ? adjustedTarget.lineIndex + 1 : nextColumn?.lineIndex;
+  lines.splice(insertIndex ?? lines.length, 0, sourceLine.replace(/^\s*/, '    '));
+  return `${lines.join('\n')}\n`;
+};
+
 const getRequirementBlockRange = (lines: string[], label: string) => {
   const wanted = normalizeLabel(label).replace(/^(?:Text|ID):\s*/i, '');
   for (let start = 0; start < lines.length; start += 1) {
@@ -939,6 +1084,7 @@ export const moveDiagramElementCode = (
   const keyword = getDiagramKeyword(code);
   if (normalizeLabel(sourceLabel) === normalizeLabel(targetLabel)) return undefined;
   if (keyword === 'block-beta') return moveLineByLabel(code, sourceLabel, targetLabel);
+  if (keyword === 'kanban') return moveKanbanItem(code, sourceLabel, targetLabel);
   if (keyword === 'gantt') {
     const lines = code.trimEnd().split('\n');
     const sourceSection = lines.findIndex(

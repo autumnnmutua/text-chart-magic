@@ -286,6 +286,7 @@ test.describe('图上分支编辑', () => {
         code: `kanban
   待办
     [任务A]`,
+        expectedBranch: '新卡片',
         target: '任务A'
       },
       {
@@ -301,17 +302,82 @@ test.describe('图上分支编辑', () => {
       }
     ];
 
-    for (const { code, target } of diagrams) {
+    for (const { code, expectedBranch = '新分支', target } of diagrams) {
       await test.step(target, async () => {
         await setEditorCode(page, code);
         await expect(page.locator('#view')).toContainText(target);
         await chooseViewText(page, target);
-        await expect(page.getByRole('button', { name: '分支' })).toBeVisible();
-        await page.getByRole('button', { name: '分支' }).click();
-        await expectStoredCodeContains(page, '新分支');
-        await expect(page.locator('#view')).toContainText('新分支');
+        const branchButton = page.getByRole('button', { exact: true, name: '分支' });
+        await expect(branchButton).toHaveAttribute('title', new RegExp(target));
+        await branchButton.click();
+        await expectStoredCodeContains(page, expectedBranch);
+        await expect(page.locator('#view')).toContainText(expectedBranch);
       });
     }
+  });
+
+  test('看板分支明确区分列、卡片和检查项', async ({ page }) => {
+    await page.goto('/');
+    await setEditorCode(
+      page,
+      `kanban
+  backlog[待规划]
+    research[用户研究]
+  doing[进行中]
+    build[功能开发]`
+    );
+
+    await chooseViewText(page, '用户研究');
+    await page.getByRole('button', { name: '卡片', exact: true }).click();
+    await expect(page.locator('#view')).toContainText('新卡片');
+    await expect.poll(() => getStoredCode(page)).toMatch(/backlog[\s\S]*card1\[新卡片\]/);
+    await editViewText(page, '新卡片', '竞品访谈');
+
+    await chooseViewText(page, '竞品访谈');
+    await page.getByRole('button', { name: '检查项', exact: true }).click();
+    await expect.poll(() => getStoredCode(page)).toContain('card1_check1[☐ 检查项]');
+
+    await chooseViewText(page, '进行中');
+    await page.getByRole('button', { name: '新列', exact: true }).click();
+    await expect(page.locator('#view')).toContainText('新看板列');
+    await expect.poll(() => getStoredCode(page)).toMatch(/^ {2}column1\[新看板列\]/m);
+  });
+
+  test('鱼骨图分支保持因果层级并递归删除子原因', async ({ page }) => {
+    await page.goto('/');
+    await setEditorCode(
+      page,
+      `ishikawa-beta
+  订单延迟
+  流程
+    审批过多
+  系统
+    库存同步慢`
+    );
+
+    await chooseViewText(page, '流程');
+    await page.getByRole('button', { name: '分支' }).click();
+    await editViewText(page, '新分支', '异常处理慢');
+    await chooseViewText(page, '异常处理慢');
+    await page.getByRole('button', { name: '分支' }).click();
+    await editViewText(page, '新分支', '缺少负责人');
+    const causeIndents = await getStoredCode(page).then((code) =>
+      Object.fromEntries(
+        code
+          .split('\n')
+          .filter((line) => /流程|异常处理慢|缺少负责人/.test(line))
+          .map((line) => [line.trim(), line.match(/^\s*/)?.[0].length ?? 0])
+      )
+    );
+    expect(causeIndents['异常处理慢'] - causeIndents['流程']).toBe(2);
+    expect(causeIndents['缺少负责人'] - causeIndents['异常处理慢']).toBe(2);
+
+    await chooseViewText(page, '异常处理慢');
+    await page.getByRole('button', { name: '删除' }).click();
+    await expect.poll(() => getStoredCode(page)).not.toContain('异常处理慢');
+    await expect.poll(() => getStoredCode(page)).not.toContain('缺少负责人');
+    await page.getByRole('button', { name: '撤回', exact: true }).click();
+    await expect(page.locator('#view')).toContainText('缺少负责人');
   });
 
   test('重置会回到当前图的初始状态而不是流程图', async ({ page }) => {
@@ -904,8 +970,12 @@ test.describe('图上分支编辑', () => {
 
     await chooseViewText(page, '狗');
     await page.getByRole('button', { name: '分支' }).click();
-    await expect(page.getByText(/饼图占比由左侧数值决定/)).toBeVisible();
-    await expect(page.getByText(/当前总数值为：31/)).toBeVisible();
+    const notice = page.getByTestId('diagram-operation-notice');
+    await expect(notice).toBeVisible({ timeout: 12_000 });
+    await expect(notice).toContainText('饼图占比由左侧数据数值决定');
+    await expect(notice).toContainText('当前总数值为：31');
+    await notice.getByRole('button', { name: '关闭操作提示' }).click();
+    await expect(notice).toBeHidden();
   });
 
   test('象限图新增元素后可以编辑和删除', async ({ page }) => {
@@ -925,7 +995,7 @@ test.describe('图上分支编辑', () => {
 
     await chooseViewText(page, '现有任务');
     await page.getByRole('button', { name: '分支' }).click();
-    await expect(page.getByText(/已新增象限图元素/)).toBeVisible();
+    await expect(page.getByTestId('diagram-operation-notice')).toContainText('已新增象限图元素');
     await expect(page.locator('#view')).toContainText('新分支');
     await editViewText(page, '新分支', '新增机会');
     const quadrantPoint = page.locator('#view svg text').filter({ hasText: '新增机会' }).first();
@@ -1819,5 +1889,41 @@ User -> Product`
     await expect
       .poll(() => page.locator('#view g[data-architecture-id="db"]').getAttribute('transform'))
       .not.toBe(movedTransform);
+  });
+
+  test('架构图虚线分组框支持新增、编辑尺寸和无损删除', async ({ page }) => {
+    await page.goto('/');
+    await setEditorCode(
+      page,
+      `architecture-beta
+  group api(cloud)[业务服务]
+  service order(server)[订单服务] in api
+  service payment(server)[支付服务] in api
+  order:R --> L:payment`
+    );
+    await page.getByRole('button', { name: '添加虚线分组框' }).click();
+    await expect.poll(() => getStoredCode(page)).toContain('%% architecture-group');
+
+    const group = page.locator('#view [data-architecture-group-id]').last();
+    await group.locator('[data-architecture-group-title]').click({ force: true });
+    const toolbar = page.getByTestId('architecture-group-toolbar');
+    await expect(toolbar).toBeVisible();
+    await toolbar.getByLabel('虚线框标题').fill('核心交易域');
+    await toolbar.getByLabel('虚线框标题').press('Enter');
+    await toolbar.getByLabel('宽').fill('420');
+    await toolbar.getByLabel('宽').press('Tab');
+    await toolbar.getByLabel('高').fill('240');
+    await toolbar.getByLabel('高').press('Tab');
+    await expect.poll(() => getStoredCode(page)).toContain('核心交易域');
+    await expect.poll(() => getStoredCode(page)).toContain('"width":420');
+    await expect.poll(() => getStoredCode(page)).toContain('"height":240');
+    await expect(group.locator('[data-architecture-group-resize]')).toHaveCount(8);
+
+    await toolbar.getByRole('button', { name: '删除虚线分组框' }).click();
+    await expect.poll(() => getStoredCode(page)).not.toContain('核心交易域');
+    await expect(page.locator('#view')).toContainText('订单服务');
+    await expect(page.locator('#view')).toContainText('支付服务');
+    await page.getByRole('button', { name: '撤回', exact: true }).click();
+    await expect.poll(() => getStoredCode(page)).toContain('核心交易域');
   });
 });

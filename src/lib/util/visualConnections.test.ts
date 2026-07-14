@@ -5,6 +5,7 @@ import {
   connectionLaneOffsets,
   createVisualConnection,
   findConnectionSnapCandidate,
+  inferVisualConnectionAppearance,
   normalizeVisualConnections,
   reverseVisualConnection
 } from './visualConnections';
@@ -105,6 +106,63 @@ describe('visualConnections', () => {
       lineStyle: 'solid',
       strokeWidth: 2
     });
+  });
+
+  it('inherits the nearest autonomous arrow appearance without mutating it', () => {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    const existing = createVisualConnection(
+      { anchor: 'right', elementId: 'source', x: 0, y: 0 },
+      { anchor: 'left', elementId: 'target', x: 100, y: 0 },
+      'connection-existing',
+      {
+        direction: 'both',
+        labelBackground: '#ffffff',
+        labelColor: '#0f172a',
+        lineStyle: 'dashed',
+        stroke: '#2563eb',
+        strokeWidth: 3
+      }
+    );
+    const appearance = inferVisualConnectionAppearance(svg, { [existing.id]: existing }, 'source');
+    const created = createVisualConnection(
+      { anchor: 'bottom', elementId: 'source', x: 10, y: 10 },
+      { x: 50, y: 50 },
+      'connection-created',
+      appearance
+    );
+
+    expect(created).toMatchObject({
+      direction: 'both',
+      labelBackground: '#ffffff',
+      labelColor: '#0f172a',
+      lineStyle: 'dashed',
+      stroke: '#2563eb',
+      strokeWidth: 3
+    });
+    expect(existing.id).toBe('connection-existing');
+  });
+
+  it('drops unsafe serialized colors while retaining valid arrow colors', () => {
+    const normalized = normalizeVisualConnections({
+      'connection-safe-colors': {
+        direction: 'forward',
+        id: 'connection-safe-colors',
+        label: '安全颜色',
+        labelBackground: 'url(https://example.com/paint)',
+        labelColor: '#0f172a',
+        lineStyle: 'solid',
+        source: { x: 0, y: 0 },
+        stroke: '#2563eb',
+        strokeWidth: 2,
+        target: { x: 10, y: 10 }
+      }
+    });
+
+    expect(normalized?.['connection-safe-colors']).toMatchObject({
+      labelColor: '#0f172a',
+      stroke: '#2563eb'
+    });
+    expect(normalized?.['connection-safe-colors'].labelBackground).toBeUndefined();
   });
 
   it('assigns stable centered lanes to parallel and reversed connections', () => {
