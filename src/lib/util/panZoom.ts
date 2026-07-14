@@ -14,6 +14,7 @@ export class PanZoomState {
   private resizeObserver: ResizeObserver;
 
   public onPanZoomChange?: (pan: Point, zoom: number, immediate?: boolean) => void;
+  public shouldHandleCanvasGesture?: (target: EventTarget | null, pointerCount: number) => boolean;
 
   constructor() {
     this.resizeObserver = new ResizeObserver(() => {
@@ -38,6 +39,7 @@ export class PanZoomState {
         init: (options) => {
           const instance = options.instance;
           let initialScale = 1;
+          let pinchInitialized = false;
           let pannedX = 0;
           let pannedY = 0;
           hammer = new Hammer(options.svgElement);
@@ -47,7 +49,12 @@ export class PanZoomState {
             pannedY = 0;
           };
           const handlePan = (event: HammerInput) => {
-            if (this.isInteractionSuspended) return;
+            if (
+              this.isInteractionSuspended ||
+              this.shouldHandleCanvasGesture?.(event.target, event.pointers?.length ?? 1) === false
+            ) {
+              return;
+            }
             instance.panBy({ x: event.deltaX - pannedX, y: event.deltaY - pannedY });
             pannedX = event.deltaX;
             pannedY = event.deltaY;
@@ -62,8 +69,9 @@ export class PanZoomState {
           });
           hammer.on('pinchstart pinchmove', (event) => {
             if (this.isInteractionSuspended) return;
-            if (event.type === 'pinchstart') {
+            if (event.type === 'pinchstart' || !pinchInitialized) {
               initialScale = instance.getZoom();
+              pinchInitialized = true;
               resetPanned();
             }
             instance.zoomAtPoint(initialScale * event.scale, {
@@ -71,6 +79,10 @@ export class PanZoomState {
               y: event.center.y
             });
             handlePan(event);
+          });
+          hammer.on('pinchend pinchcancel', () => {
+            pinchInitialized = false;
+            resetPanned();
           });
           preventTouchMove = (event: TouchEvent) => {
             event.preventDefault();
@@ -221,6 +233,7 @@ export class PanZoomState {
     this.pzoom = undefined;
     this.diagramView = undefined;
     this.onPanZoomChange = undefined;
+    this.shouldHandleCanvasGesture = undefined;
     this.pan = undefined;
     this.zoom = undefined;
     this.isDirty = false;

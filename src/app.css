@@ -97,11 +97,25 @@
     @apply border-border;
   }
   body {
-    @apply h-screen w-screen overflow-hidden bg-background text-foreground;
+    @apply h-screen w-screen overflow-hidden overscroll-none bg-background text-foreground;
   }
 }
 
 body {
   font-family:
     'Recursive Variable', 'Microsoft YaHei', 'PingFang SC', 'Noto Sans CJK SC', sans-serif;
+}
+
+html,
+body,
+#svelte {
+  min-width: 0;
+  max-width: 100%;
+}
+
+@media (pointer: coarse) {
+  button,
+  [role='button'] {
+    -webkit-tap-highlight-color: transparent;
+  }
 }

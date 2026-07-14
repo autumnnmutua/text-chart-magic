@@ -1,7 +1,13 @@
 import { loadDataFromUrl } from './fileLoaders/loader';
 import { initLoading } from './loading.svelte';
 import { applyMigrations } from './migrations.svelte';
-import { initURLSubscription, loadState, updateCodeStore, verifyState } from './state.svelte';
+import {
+  initURLSubscription,
+  loadState,
+  updateCodeStore,
+  verifyState,
+  waitForStateValidation
+} from './state.svelte';
 import { getAnalyticsSafeUrl, initAnalytics, plausible } from './stats';
 
 export const loadStateFromCurrentURL = (): void => {
@@ -21,6 +27,7 @@ const initialize = async (): Promise<void> => {
   applyMigrations();
   loadStateFromCurrentURL();
   await initLoading('正在读取图表…', loadDataFromUrl().catch(console.error));
+  await waitForStateValidation();
   initURLSubscription();
   await initAnalytics();
   plausible?.trackPageview({

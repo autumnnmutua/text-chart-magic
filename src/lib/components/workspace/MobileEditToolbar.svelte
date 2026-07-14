@@ -5,38 +5,72 @@
     finishConnectionCreation,
     startConnectionCreation
   } from '$lib/util/connectionEditor.svelte';
-  import { closeCommandPalette, openCommandPalette } from '$lib/util/commandRegistry.svelte';
-  import { closeGlobalSearch, openGlobalSearch } from '$lib/util/globalSearch.svelte';
+  import { getDiagramKeyword } from '$lib/util/diagramBranch';
+  import {
+    mobileWorkspace,
+    openMobileWorkspaceSheet,
+    setMobileToolMode,
+    type MobileToolMode
+  } from '$lib/util/mobileWorkspace.svelte';
   import { notify } from '$lib/util/notify';
-  import { addDiagramBranch, validatedState } from '$lib/util/state.svelte';
+  import {
+    addDiagramBranch,
+    canRedoEdit,
+    canUndoEdit,
+    redoLastEdit,
+    undoLastEdit,
+    validatedState
+  } from '$lib/util/state.svelte';
   import { requestVisualEdit } from '$lib/util/visualDocument.svelte';
   import {
     openVisualColorPanel,
     setSelectionMode,
     visualSelection
   } from '$lib/util/visualSelection.svelte';
-  import { deleteSelectedElements } from '$lib/util/visualOperations';
-  import { openWorkspacePanel } from '$lib/util/workspacePanels.svelte';
   import {
+    canAlignSelection,
+    deleteSelectedElements,
+    selectAllVisualElements,
+    setSelectedLocked
+  } from '$lib/util/visualOperations';
+  import {
+    AlignCenterHorizontal,
     ArrowUpRight,
-    Code2,
-    Command,
+    Check,
+    Focus,
     GitBranchPlus,
-    History as HistoryIcon,
-    Layers,
-    ListChecks,
+    Hand,
+    Lock,
+    LockOpen,
+    MoreHorizontal,
+    MousePointer2,
     Palette,
     Pencil,
-    Search,
-    Trash2
+    Redo2,
+    Trash2,
+    Undo2
   } from 'lucide-svelte';
-
-  let { onOpenHistory }: { onOpenHistory?: () => void } = $props();
 
   const current = $derived(visualSelection.current);
   const canColor = $derived(
     visualSelection.ids.some((id) => !validatedState.current.visualLayers?.[id]?.locked)
   );
+  const currentLocked = $derived(
+    visualSelection.count > 0 &&
+      visualSelection.ids.every((id) => validatedState.current.visualLayers?.[id]?.locked)
+  );
+
+  const switchMode = (next: MobileToolMode): void => {
+    if (next === 'connection') {
+      setSelectionMode(false);
+      setMobileToolMode('connection');
+      startConnectionCreation();
+      return;
+    }
+    finishConnectionCreation();
+    setSelectionMode(next === 'multi');
+    setMobileToolMode(next);
+  };
 
   const editText = (): void => {
     if (!current) return;
@@ -55,108 +89,157 @@
 
   const addBranch = (): void => {
     if (!current || current.kind === 'edge') return;
-    if (!addDiagramBranch({ label: current.label, sourceId: current.sourceId })) {
+    if (
+      !addDiagramBranch({
+        label: current.label,
+        mode: getDiagramKeyword(validatedState.current.code) === 'kanban' ? 'card' : 'branch',
+        sourceId: current.sourceId
+      })
+    ) {
       notify('当前元素不支持添加分支。');
     }
   };
 
-  const openSearch = (): void => {
-    openGlobalSearch();
-    openWorkspacePanel('search');
-  };
-
-  const openLayers = (): void => {
-    closeGlobalSearch();
-    openWorkspacePanel('layers');
+  const toggleConnectionMode = (): void => {
+    if (connectionEditor.isCreating) switchMode('select');
+    else switchMode('connection');
   };
 </script>
 
 <div
-  class="pointer-events-auto absolute inset-x-2 bottom-[max(.5rem,env(safe-area-inset-bottom))] z-50 flex flex-col gap-1"
+  class={[
+    'pointer-events-auto absolute right-[max(.5rem,env(safe-area-inset-right))] left-[max(.5rem,env(safe-area-inset-left))] z-50 flex flex-col gap-1 transition-[bottom] duration-150',
+    mobileWorkspace.isKeyboardOpen
+      ? 'bottom-[max(.25rem,env(safe-area-inset-bottom))]'
+      : 'bottom-[max(.5rem,env(safe-area-inset-bottom))]'
+  ]}
   data-testid="mobile-edit-toolbar">
-  {#if current}
+  {#if mobileWorkspace.mode === 'multi' && !mobileWorkspace.isKeyboardOpen}
     <div
-      class="flex items-center justify-center gap-1 rounded-md border border-border-dark bg-card p-1 shadow-lg">
-      <Button class="h-11 flex-1 px-2" variant="ghost" onclick={editText}>
-        <Pencil class="size-4" />
-        文字
-      </Button>
+      class="grid grid-cols-5 items-center gap-1 rounded-md border border-border-dark bg-card p-1 shadow-lg">
       <Button
-        class="h-11 flex-1 px-2"
+        class="h-11 flex-col gap-0 px-1 text-[11px]"
         variant="ghost"
-        disabled={current.kind === 'edge'}
-        onclick={addBranch}>
-        <GitBranchPlus class="size-4" />
-        分支
+        onclick={selectAllVisualElements}>
+        <Focus class="size-4" />全选
       </Button>
       <Button
-        class="h-11 flex-1 px-2"
+        class="h-11 flex-col gap-0 px-1 text-[11px]"
+        variant="ghost"
+        disabled={!canAlignSelection(2)}
+        onclick={() => openMobileWorkspaceSheet('align')}>
+        <AlignCenterHorizontal class="size-4" />对齐
+      </Button>
+      <Button
+        class="h-11 flex-col gap-0 px-1 text-[11px]"
         variant="ghost"
         disabled={!canColor}
         onclick={openVisualColorPanel}>
-        <Palette class="size-4" />
-        调色
+        <Palette class="size-4" />调色
       </Button>
       <Button
-        class="h-11 flex-1 px-2 hover:text-destructive"
+        class="h-11 flex-col gap-0 px-1 text-[11px] hover:text-destructive"
         variant="ghost"
+        disabled={visualSelection.count === 0 || currentLocked}
         onclick={deleteSelectedElements}>
-        <Trash2 class="size-4" />
-        删除
+        <Trash2 class="size-4" />删除
+      </Button>
+      <Button
+        class="h-11 flex-col gap-0 px-1 text-[11px]"
+        variant="accent"
+        onclick={() => switchMode('select')}>
+        <Check class="size-4" />完成 {visualSelection.count}
+      </Button>
+    </div>
+  {:else if current && !mobileWorkspace.isKeyboardOpen}
+    <div
+      class="grid grid-cols-5 items-center gap-1 rounded-md border border-border-dark bg-card p-1 shadow-lg"
+      aria-label="所选元素操作">
+      <Button class="h-11 flex-col gap-0 px-1 text-[11px]" variant="ghost" onclick={editText}>
+        <Pencil class="size-4" />文字
+      </Button>
+      <Button
+        class="h-11 flex-col gap-0 px-1 text-[11px]"
+        variant="ghost"
+        disabled={current.kind === 'edge' || currentLocked}
+        onclick={addBranch}>
+        <GitBranchPlus class="size-4" />分支
+      </Button>
+      <Button
+        class="h-11 flex-col gap-0 px-1 text-[11px]"
+        variant="ghost"
+        disabled={!canColor}
+        onclick={openVisualColorPanel}>
+        <Palette class="size-4" />调色
+      </Button>
+      <Button
+        class="h-11 flex-col gap-0 px-1 text-[11px]"
+        variant="ghost"
+        onclick={() => setSelectedLocked(!currentLocked)}>
+        {#if currentLocked}<LockOpen class="size-4" />解锁{:else}<Lock class="size-4" />锁定{/if}
+      </Button>
+      <Button
+        class="h-11 flex-col gap-0 px-1 text-[11px] hover:text-destructive"
+        variant="ghost"
+        disabled={currentLocked}
+        onclick={deleteSelectedElements}>
+        <Trash2 class="size-4" />删除
       </Button>
     </div>
   {/if}
-  <nav
-    class="grid grid-cols-7 gap-1 rounded-md border border-border-dark bg-card p-1 shadow-xl"
-    aria-label="手机编辑工具">
-    <Button
-      class="h-12 flex-col gap-0 px-1 text-[11px]"
-      variant={visualSelection.isSelectionMode ? 'accent' : 'ghost'}
-      aria-pressed={visualSelection.isSelectionMode}
-      onclick={() => setSelectionMode(!visualSelection.isSelectionMode)}>
-      <ListChecks class="size-4" />
-      多选
-    </Button>
-    <Button class="h-12 flex-col gap-0 px-1 text-[11px]" variant="ghost" onclick={openSearch}>
-      <Search class="size-4" />
-      搜索
-    </Button>
-    <Button class="h-12 flex-col gap-0 px-1 text-[11px]" variant="ghost" onclick={openLayers}>
-      <Layers class="size-4" />
-      图层
-    </Button>
-    <Button
-      class="h-12 flex-col gap-0 px-1 text-[11px]"
-      variant="ghost"
-      onclick={() => openWorkspacePanel('code')}>
-      <Code2 class="size-4" />
-      代码
-    </Button>
-    <Button
-      class="h-12 flex-col gap-0 px-1 text-[11px]"
-      variant={connectionEditor.isCreating ? 'accent' : 'ghost'}
-      aria-pressed={connectionEditor.isCreating}
-      onclick={() =>
-        connectionEditor.isCreating ? finishConnectionCreation() : startConnectionCreation()}>
-      <ArrowUpRight class="size-4" />
-      箭头
-    </Button>
-    <Button
-      class="h-12 flex-col gap-0 px-1 text-[11px]"
-      variant="ghost"
-      onclick={() => {
-        closeCommandPalette();
-        openCommandPalette();
-      }}>
-      <Command class="size-4" />
-      命令
-    </Button>
-    <Button
-      class="h-12 flex-col gap-0 px-1 text-[11px]"
-      variant="ghost"
-      onclick={() => onOpenHistory?.()}>
-      <HistoryIcon class="size-4" />
-      历史
-    </Button>
-  </nav>
+  {#if !mobileWorkspace.isKeyboardOpen}
+    <nav
+      class="grid grid-cols-7 gap-1 rounded-md border border-border-dark bg-card p-1 shadow-xl"
+      aria-label="手机编辑工具">
+      <Button
+        class="h-12 flex-col gap-0 px-1 text-[11px]"
+        variant={mobileWorkspace.mode === 'select' ? 'accent' : 'ghost'}
+        aria-pressed={mobileWorkspace.mode === 'select'}
+        onclick={() => switchMode('select')}>
+        <MousePointer2 class="size-4" />选择
+      </Button>
+      <Button
+        class="h-12 flex-col gap-0 px-1 text-[11px]"
+        variant={mobileWorkspace.mode === 'pan' ? 'accent' : 'ghost'}
+        aria-pressed={mobileWorkspace.mode === 'pan'}
+        onclick={() => switchMode('pan')}>
+        <Hand class="size-4" />画布
+      </Button>
+      <Button
+        class="h-12 flex-col gap-0 px-1 text-[11px]"
+        variant="ghost"
+        disabled={!current || current.kind === 'edge' || currentLocked}
+        onclick={addBranch}>
+        <GitBranchPlus class="size-4" />分支
+      </Button>
+      <Button
+        class="h-12 flex-col gap-0 px-1 text-[11px]"
+        variant={connectionEditor.isCreating ? 'accent' : 'ghost'}
+        aria-pressed={connectionEditor.isCreating}
+        onclick={toggleConnectionMode}>
+        <ArrowUpRight class="size-4" />箭头
+      </Button>
+      <Button
+        class="h-12 flex-col gap-0 px-1 text-[11px]"
+        variant="ghost"
+        disabled={!canUndoEdit.current}
+        onclick={() => undoLastEdit()}>
+        <Undo2 class="size-4" />撤回
+      </Button>
+      <Button
+        class="h-12 flex-col gap-0 px-1 text-[11px]"
+        variant="ghost"
+        disabled={!canRedoEdit.current}
+        onclick={() => redoLastEdit()}>
+        <Redo2 class="size-4" />重做
+      </Button>
+      <Button
+        class="h-12 flex-col gap-0 px-1 text-[11px]"
+        variant={mobileWorkspace.sheet ? 'accent' : 'ghost'}
+        aria-expanded={Boolean(mobileWorkspace.sheet)}
+        onclick={() => openMobileWorkspaceSheet('more')}>
+        <MoreHorizontal class="size-4" />更多
+      </Button>
+    </nav>
+  {/if}
 </div>

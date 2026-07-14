@@ -109,7 +109,7 @@ test.describe('Site Loads', () => {
 
   test('should show troubleshooting steps if loading fails', async ({ editPage, page }) => {
     await editPage.start('/#/edit/eyJjb2RlIjoiZ3JhcGggVERcbiAg');
-    await page.reload({ waitUntil: 'networkidle' });
+    await page.reload({ waitUntil: 'domcontentloaded' });
     await editPage.checkTextInView('重新检查是不是链接读取失败');
   });
 });

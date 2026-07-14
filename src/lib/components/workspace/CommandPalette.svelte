@@ -73,12 +73,13 @@
 
 {#if commandRegistry.isPaletteOpen}
   <div
-    class="fixed inset-0 z-[100] flex items-start justify-center bg-black/30 p-2 pt-[max(8vh,1rem)] backdrop-blur-[2px] sm:p-6"
+    class="absolute inset-0 z-[100] flex items-end justify-center bg-black/30 p-0 backdrop-blur-[2px] sm:fixed sm:items-start sm:p-6 sm:pt-[max(8vh,1rem)]"
+    style="bottom: var(--mobile-keyboard-height, 0px);"
     role="presentation"
     data-testid="command-palette-overlay"
     onclick={(event) => event.target === event.currentTarget && closeCommandPalette()}>
     <div
-      class="flex max-h-[min(78vh,680px)] w-full max-w-2xl flex-col overflow-hidden rounded-md border border-border-dark bg-card shadow-2xl max-sm:h-[calc(100dvh-1rem)] max-sm:max-h-none"
+      class="flex max-h-[min(78vh,680px)] w-full max-w-2xl flex-col overflow-hidden rounded-md border border-border-dark bg-card shadow-2xl max-sm:h-[min(82dvh,var(--mobile-visual-height,82dvh))] max-sm:rounded-b-none max-sm:pb-[env(safe-area-inset-bottom)]"
       role="dialog"
       aria-modal="true"
       aria-label="命令面板"

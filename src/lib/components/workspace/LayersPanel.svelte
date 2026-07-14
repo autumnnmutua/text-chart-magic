@@ -35,6 +35,8 @@
     X
   } from 'lucide-svelte';
 
+  let { embedded = false }: { embedded?: boolean } = $props();
+
   let filter = $state('');
   let collapsedIds = $state<string[]>([]);
   let editingId = $state('');
@@ -114,16 +116,18 @@
 </script>
 
 <div class="flex h-full min-h-0 flex-col" data-testid="layers-panel">
-  <header class="flex items-center gap-2 border-b p-3">
-    <Layers class="size-5 text-accent" />
-    <div class="min-w-0 flex-1">
-      <h2 class="text-sm font-semibold">图层与大纲</h2>
-      <p class="text-xs text-muted-foreground">{visualDocument.current.length} 个可管理元素</p>
-    </div>
-    <Button size="icon" variant="ghost" title="关闭图层" aria-label="关闭图层" onclick={close}>
-      <X class="size-4" />
-    </Button>
-  </header>
+  {#if !embedded}
+    <header class="flex items-center gap-2 border-b p-3">
+      <Layers class="size-5 text-accent" />
+      <div class="min-w-0 flex-1">
+        <h2 class="text-sm font-semibold">图层与大纲</h2>
+        <p class="text-xs text-muted-foreground">{visualDocument.current.length} 个可管理元素</p>
+      </div>
+      <Button size="icon" variant="ghost" title="关闭图层" aria-label="关闭图层" onclick={close}>
+        <X class="size-4" />
+      </Button>
+    </header>
+  {/if}
 
   <div class="border-b p-2">
     <div class="relative">
@@ -199,11 +203,12 @@
           {/if}
         </div>
 
-        <div class="hidden shrink-0 items-center group-hover:flex group-focus-within:flex">
+        <div
+          class="hidden shrink-0 items-center group-hover:flex group-focus-within:flex max-sm:flex">
           <Button
             size="icon"
             variant="ghost"
-            class="size-7"
+            class="size-7 max-sm:size-11"
             title="重命名"
             aria-label="重命名"
             onclick={() => beginRename(item)}><Pencil class="size-3.5" /></Button>
@@ -211,7 +216,7 @@
             <Button
               size="icon"
               variant="ghost"
-              class="size-7"
+              class="size-7 max-sm:size-11"
               title={layer.hidden ? '显示' : '隐藏'}
               aria-label={layer.hidden ? '显示' : '隐藏'}
               onclick={() => updateVisualLayer([item.id], { hidden: !layer.hidden })}>
@@ -221,7 +226,7 @@
           <Button
             size="icon"
             variant="ghost"
-            class="size-7"
+            class="size-7 max-sm:size-11"
             title={layer.locked ? '解锁' : '锁定'}
             aria-label={layer.locked ? '解锁' : '锁定'}
             onclick={() => updateVisualLayer([item.id], { locked: !layer.locked })}>
@@ -231,7 +236,7 @@
             <Button
               size="icon"
               variant="ghost"
-              class="size-7 hover:text-destructive"
+              class="size-7 hover:text-destructive max-sm:size-11"
               title="删除"
               aria-label="删除"
               disabled={layer.locked}

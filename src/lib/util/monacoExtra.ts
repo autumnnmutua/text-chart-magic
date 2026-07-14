@@ -4,6 +4,22 @@ import type * as Monaco from 'monaco-editor';
 
 const commentRegex = /(?<!["'])%%(?![^"']*["']\)).*$/;
 
+export const isExpectedMonacoCancellation = (reason: unknown): boolean =>
+  reason instanceof Error &&
+  reason.name === 'Canceled' &&
+  reason.message === 'Canceled' &&
+  /(?:monaco-editor|WordHighlighter|Delayer\.cancel)/.test(reason.stack ?? '');
+
+export const installMonacoCancellationGuard = (): void => {
+  if (typeof window === 'undefined') return;
+  const guardedWindow = window as Window & { __textChartMagicMonacoGuard?: boolean };
+  if (guardedWindow.__textChartMagicMonacoGuard) return;
+  guardedWindow.addEventListener('unhandledrejection', (event) => {
+    if (isExpectedMonacoCancellation(event.reason)) event.preventDefault();
+  });
+  guardedWindow.__textChartMagicMonacoGuard = true;
+};
+
 export const initEditor = (monacoEditor: typeof Monaco): void => {
   monacoEditor.languages.register({ id: 'mermaid' });
   const requirementDiagrams = [

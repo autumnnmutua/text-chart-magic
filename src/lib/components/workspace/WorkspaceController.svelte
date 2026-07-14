@@ -4,10 +4,13 @@
   import ArchitectureGroupToolbar from '$lib/components/workspace/ArchitectureGroupToolbar.svelte';
   import DiagramNotice from '$lib/components/workspace/DiagramNotice.svelte';
   import MobileEditToolbar from '$lib/components/workspace/MobileEditToolbar.svelte';
+  import MobileMorePanel from '$lib/components/workspace/MobileMorePanel.svelte';
+  import MobileSheet from '$lib/components/workspace/MobileSheet.svelte';
   import WorkspacePanelHost from '$lib/components/workspace/WorkspacePanelHost.svelte';
   import ColorPickerPanel from '$lib/components/ColorPickerPanel.svelte';
   import {
     cancelConnectionCreation,
+    connectionEditor,
     startConnectionCreation
   } from '$lib/util/connectionEditor.svelte';
   import {
@@ -23,6 +26,13 @@
     refreshGlobalSearch
   } from '$lib/util/globalSearch.svelte';
   import { notify } from '$lib/util/notify';
+  import {
+    closeMobileWorkspaceSheet,
+    mobileWorkspace,
+    observeMobileViewport,
+    setMobileToolMode,
+    setMobileWorkspaceEnabled
+  } from '$lib/util/mobileWorkspace.svelte';
   import type { PanZoomState } from '$lib/util/panZoom';
   import {
     canRedoEdit,
@@ -39,6 +49,7 @@
   import { getDiagramKeyword } from '$lib/util/diagramBranch';
   import {
     clearVisualSelection,
+    closeVisualColorPanel,
     openVisualColorPanel,
     setSelectionMode,
     visualSelection
@@ -96,6 +107,14 @@
 
   const escapeWorkspace = (): void => {
     if (cancelConnectionCreation()) return;
+    if (mobileWorkspace.sheet) {
+      closeMobileWorkspaceSheet();
+      return;
+    }
+    if (visualSelection.isColorPanelOpen) {
+      closeVisualColorPanel();
+      return;
+    }
     if (commandRegistry.isPaletteOpen) {
       closeCommandPalette();
       return;
@@ -396,6 +415,18 @@
     };
   });
 
+  onMount(() => observeMobileViewport());
+
+  $effect(() => {
+    setMobileWorkspaceEnabled(isMobile);
+  });
+
+  $effect(() => {
+    if (isMobile && mobileWorkspace.mode === 'connection' && !connectionEditor.isCreating) {
+      setMobileToolMode('select');
+    }
+  });
+
   $effect(() => {
     if (globalSearch.isOpen) refreshGlobalSearch(validatedState.current.code);
   });
@@ -406,12 +437,11 @@
 <ArchitectureGroupToolbar />
 <WorkspacePanelHost {isMobile} />
 {#if isMobile}
-  <MobileEditToolbar {onOpenHistory} />
+  <MobileEditToolbar />
+  <MobileMorePanel {onOpenHistory} {panZoomState} />
   {#if visualSelection.isColorPanelOpen}
-    <aside
-      class="fixed inset-x-0 bottom-0 z-[70] max-h-[82dvh] overflow-y-auto rounded-t-md border border-border-dark bg-card pb-[env(safe-area-inset-bottom)] shadow-2xl"
-      aria-label="手机调色面板">
-      <ColorPickerPanel />
-    </aside>
+    <MobileSheet title="调色" ariaLabel="手机调色面板" onClose={closeVisualColorPanel}>
+      <div class="h-full overflow-y-auto"><ColorPickerPanel /></div>
+    </MobileSheet>
   {/if}
 {/if}

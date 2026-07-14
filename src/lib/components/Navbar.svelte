@@ -19,7 +19,7 @@
   let { children, mobileToggle }: Props = $props();
 </script>
 
-<nav class="z-50 flex p-4 sm:p-6">
+<nav class="z-50 flex min-h-12 shrink-0 items-center px-3 py-2 sm:min-h-16 sm:p-6">
   <div class="flex flex-1 items-center gap-2">
     <MermaidIcon class="size-6" />
     <span class="pointer-events-none whitespace-nowrap text-accent">图表编辑器</span>

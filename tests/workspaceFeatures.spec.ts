@@ -544,7 +544,10 @@ test.describe('统一工作区能力', () => {
       await page.locator('#view').getByText('输入中文想法', { exact: true }).click({ force: true });
       await mobileToolbar.getByRole('button', { name: '文字' }).click();
       await page.getByLabel('图中文字编辑').fill('手机直接编辑');
-      await page.keyboard.press('Enter');
+      await page
+        .getByTestId('mobile-text-editor')
+        .getByRole('button', { name: '完成', exact: true })
+        .tap();
       await expect(page.locator('#view')).toContainText('手机直接编辑');
 
       await mobileToolbar.getByRole('button', { name: '箭头', exact: true }).click();
@@ -564,22 +567,27 @@ test.describe('统一工作区能力', () => {
       await connectionLabel.press('Enter');
       await expect(mobileConnection).toContainText('手机箭头说明');
 
-      const multiSelect = mobileToolbar.getByRole('button', { name: '多选' });
+      await mobileToolbar.getByRole('button', { name: '更多' }).click();
+      const multiSelect = page.getByRole('button', { name: '多选', exact: true });
       await multiSelect.click();
-      await expect(multiSelect).toHaveAttribute('aria-pressed', 'true');
-      await mobileToolbar.getByRole('button', { name: '搜索' }).click();
+      await expect(mobileToolbar.getByRole('button', { name: /完成/ })).toBeVisible();
+      await mobileToolbar.getByRole('button', { name: '更多' }).click();
+      await page.getByRole('button', { name: '搜索', exact: true }).click();
       await expect(page.getByTestId('global-search-panel')).toBeVisible();
-      await page.getByRole('button', { name: '关闭搜索' }).click();
-      await mobileToolbar.getByRole('button', { name: '图层' }).click();
+      await page.getByRole('button', { name: '关闭全局搜索与替换', exact: true }).click();
+      await mobileToolbar.getByRole('button', { name: '更多' }).click();
+      await page.getByRole('button', { name: '图层', exact: true }).click();
       await expect(page.getByTestId('layers-panel')).toBeVisible();
-      await page.getByRole('button', { name: '关闭图层' }).click();
-      await mobileToolbar.getByRole('button', { name: '代码' }).click();
+      await page.getByRole('button', { name: '关闭图层与大纲', exact: true }).click();
+      await mobileToolbar.getByRole('button', { name: '更多' }).click();
+      await page.getByRole('button', { name: '代码', exact: true }).click();
       await expect(page.getByTestId('code-workbench')).toBeVisible();
       await expect(page.getByTestId('code-workbench').getByLabel('图表代码')).toBeEditable();
-      await page.getByRole('button', { name: '关闭代码工作台' }).click();
+      await page.getByRole('button', { name: '关闭代码工作台', exact: true }).click();
 
-      await page.getByRole('button', { name: '历史' }).click();
-      await expect(page.getByRole('complementary', { name: '手机历史记录' })).toBeVisible();
+      await mobileToolbar.getByRole('button', { name: '更多' }).click();
+      await page.getByRole('button', { name: '历史', exact: true }).click();
+      await expect(page.getByRole('dialog', { name: '手机历史记录' })).toBeVisible();
       await page.getByRole('button', { name: '关闭历史记录' }).click();
 
       const viewport = page.locator('#view svg .svg-pan-zoom_viewport');

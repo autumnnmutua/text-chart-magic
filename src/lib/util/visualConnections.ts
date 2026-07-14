@@ -495,13 +495,13 @@ const renderConnectionGroup = (
     handleHit.dataset.connectionHandle = 'true';
     handleHit.setAttribute('cx', `${endpoint.x}`);
     handleHit.setAttribute('cy', `${endpoint.y}`);
-    handleHit.setAttribute('r', '6');
+    handleHit.setAttribute('r', '8');
     handleHit.setAttribute('vector-effect', 'non-scaling-stroke');
     handleHit.style.cursor = 'crosshair';
     handleHit.style.fill = 'transparent';
     handleHit.style.pointerEvents = 'all';
     handleHit.style.stroke = 'transparent';
-    handleHit.style.strokeWidth = '16px';
+    handleHit.style.strokeWidth = '24px';
     const handle = createSvgElement('circle');
     handle.dataset.connectionEndpoint = role;
     handle.dataset.connectionHandle = 'true';

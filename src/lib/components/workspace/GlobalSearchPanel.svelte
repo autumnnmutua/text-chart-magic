@@ -17,6 +17,7 @@
   import { closeWorkspacePanel } from '$lib/util/workspacePanels.svelte';
   import { ChevronDown, ChevronUp, Replace, ReplaceAll, Search, X } from 'lucide-svelte';
 
+  let { embedded = false }: { embedded?: boolean } = $props();
   let queryInput = $state<HTMLInputElement | null>(null);
 
   $effect(() => {
@@ -49,16 +50,18 @@
 </script>
 
 <div class="flex h-full min-h-0 flex-col" data-testid="global-search-panel">
-  <header class="flex items-center gap-2 border-b p-3">
-    <Search class="size-5 text-accent" />
-    <div class="min-w-0 flex-1">
-      <h2 class="text-sm font-semibold">全局搜索与替换</h2>
-      <p class="text-xs text-muted-foreground">仅搜索当前作品中的可编辑用户文本</p>
-    </div>
-    <Button size="icon" variant="ghost" title="关闭搜索" aria-label="关闭搜索" onclick={close}>
-      <X class="size-4" />
-    </Button>
-  </header>
+  {#if !embedded}
+    <header class="flex items-center gap-2 border-b p-3">
+      <Search class="size-5 text-accent" />
+      <div class="min-w-0 flex-1">
+        <h2 class="text-sm font-semibold">全局搜索与替换</h2>
+        <p class="text-xs text-muted-foreground">仅搜索当前作品中的可编辑用户文本</p>
+      </div>
+      <Button size="icon" variant="ghost" title="关闭搜索" aria-label="关闭搜索" onclick={close}>
+        <X class="size-4" />
+      </Button>
+    </header>
+  {/if}
 
   <div class="flex flex-col gap-3 p-3">
     <div class="flex items-center gap-2">

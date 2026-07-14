@@ -29,12 +29,23 @@ import {
   updateConfig,
   undoLastEdit,
   validatedState,
-  verifyState
+  verifyState,
+  waitForStateValidation
 } from './state.svelte';
 import { searchEditableSourceText } from './searchModel';
 import { createVisualConnection } from './visualConnections';
 
 describe('saved state compatibility', () => {
+  it('waits for the newest validation when updates arrive back to back', async () => {
+    updateCode('flowchart LR\n  A[过期状态]');
+    updateCode('flowchart LR\n  B[最终状态]');
+
+    await waitForStateValidation();
+
+    expect(validatedState.current.code).toContain('B[最终状态]');
+    expect(validatedState.current.code).not.toContain('过期状态');
+  });
+
   it('fills fields missing from legacy saved data without replacing its diagram', () => {
     const normalized = normalizeState({ code: 'flowchart LR\n  Legacy[旧作品]' });
 

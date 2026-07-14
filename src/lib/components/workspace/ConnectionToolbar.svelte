@@ -48,14 +48,15 @@
 
 {#if connection}
   <div
-    class="pointer-events-auto absolute top-2 right-2 z-40 flex max-w-[min(92vw,680px)] flex-wrap items-center gap-1 rounded-md border border-border-dark bg-card p-1 shadow-xl"
+    class="connection-toolbar pointer-events-auto absolute top-2 right-2 z-40 flex max-w-[min(92vw,680px)] flex-wrap items-center gap-1 rounded-md border border-border-dark bg-card p-1 shadow-xl max-sm:left-2 max-sm:max-w-none"
     data-testid="connection-toolbar">
     <input
-      class="h-9 min-w-28 flex-1 rounded-sm border border-border bg-background px-2 text-sm outline-none focus:border-accent"
+      class="h-9 min-w-28 flex-1 rounded-sm border border-border bg-background px-2 text-sm outline-none focus:border-accent max-sm:h-11 max-sm:min-w-full max-sm:text-base"
       aria-label="箭头文字"
       bind:value={labelDraft}
       onblur={commitLabel}
       onkeydown={(event) => {
+        if (event.isComposing) return;
         if (event.key === 'Enter') event.currentTarget.blur();
         if (event.key === 'Escape') {
           labelDraft = connection.label;
@@ -145,3 +146,12 @@
     </Button>
   </div>
 {/if}
+
+<style>
+  @media (pointer: coarse) {
+    .connection-toolbar :global(button) {
+      min-width: 44px;
+      min-height: 44px;
+    }
+  }
+</style>

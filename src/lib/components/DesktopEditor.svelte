@@ -3,7 +3,7 @@
   import { env } from '$/util/env';
   import { updateCodeStore, validatedState } from '$/util/state.svelte';
   import { editorFocus } from '$lib/util/editorFocus.svelte';
-  import { initEditor } from '$lib/util/monacoExtra';
+  import { initEditor, installMonacoCancellationGuard } from '$lib/util/monacoExtra';
   import { findVisualTextRange } from '$lib/util/visualTextEdit';
   import { mode } from 'mode-watcher';
   import * as monaco from 'monaco-editor';
@@ -16,12 +16,14 @@
   let divElement: HTMLDivElement | undefined = $state();
   let editor: monaco.editor.IStandaloneCodeEditor | undefined;
   const editorOptions = {
+    glyphMargin: false,
+    lineNumbersMinChars: 4,
     minimap: {
       enabled: false
     },
+    occurrencesHighlight: 'off',
     overviewRulerLanes: 0,
-    glyphMargin: false,
-    lineNumbersMinChars: 4
+    selectionHighlight: false
   } satisfies monaco.editor.IStandaloneEditorConstructionOptions;
   let currentText = '';
   let isUpdatingFromState = false;
@@ -101,6 +103,7 @@
   };
 
   onMount(() => {
+    installMonacoCancellationGuard();
     self.MonacoEnvironment = {
       getWorker(_, label) {
         if (label === 'json') {
@@ -155,10 +158,10 @@
 
     return () => {
       resizeObserver.disconnect();
-      jsonModel.dispose();
-      mermaidModel.dispose();
       editor?.dispose();
       editor = undefined;
+      jsonModel.dispose();
+      mermaidModel.dispose();
     };
   });
 

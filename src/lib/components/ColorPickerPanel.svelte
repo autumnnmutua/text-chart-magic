@@ -390,13 +390,13 @@
       type="button"
       bind:this={panelElement}
       aria-label="饱和度和明度"
-      class="relative h-56 cursor-crosshair overflow-hidden rounded-md border border-border"
+      class="color-sv-panel relative h-56 cursor-crosshair touch-none overflow-hidden rounded-md border border-border"
       style={`background:
         linear-gradient(to top, #000, transparent),
         linear-gradient(to right, #fff, hsl(${hue} 100% 50%));`}
       onpointerdown={startPointerPick}
       onpointermove={(event) => {
-        if (event.buttons === 1) updateFromPointer(event);
+        if (activeColorPointerId === event.pointerId) updateFromPointer(event);
       }}>
       <span
         class="absolute size-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow"
@@ -409,11 +409,11 @@
         type="button"
         bind:this={hueElement}
         aria-label="色相"
-        class="relative h-5 cursor-ew-resize rounded-full border border-border"
+        class="color-hue-bar relative h-5 cursor-ew-resize touch-none rounded-full border border-border"
         style="background: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);"
         onpointerdown={startHuePick}
         onpointermove={(event) => {
-          if (event.buttons === 1) updateHueFromPointer(event);
+          if (activeColorPointerId === event.pointerId) updateHueFromPointer(event);
         }}>
         <span
           class="absolute top-1/2 size-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow"
@@ -424,7 +424,7 @@
     <label class="grid gap-1 text-xs font-medium">
       透明度 Alpha
       <input
-        class="h-3 cursor-pointer appearance-none rounded-full"
+        class="color-alpha-bar h-3 cursor-pointer appearance-none rounded-full"
         style={`background: linear-gradient(to right, transparent, ${currentHex});`}
         type="range"
         aria-label="透明度 Alpha"
@@ -473,7 +473,7 @@
       <div class="flex flex-wrap gap-2">
         {#each recentColors as color (color)}
           <button
-            class="size-7 rounded border border-border"
+            class="color-swatch size-7 rounded border border-border"
             style={`background: ${color};`}
             title={color}
             onclick={() => useColor(color)}></button>
@@ -486,7 +486,7 @@
       <div class="flex flex-wrap gap-2">
         {#each presets as color (color)}
           <button
-            class="size-7 rounded border border-border"
+            class="color-swatch size-7 rounded border border-border"
             style={`background: ${color};`}
             title={color}
             onclick={() => useColor(color)}></button>
@@ -500,3 +500,24 @@
     </div>
   </div>
 </Card>
+
+<style>
+  @media (pointer: coarse) {
+    .color-sv-panel {
+      min-height: 240px;
+    }
+
+    .color-hue-bar {
+      height: 44px;
+    }
+
+    .color-alpha-bar {
+      height: 32px;
+    }
+
+    .color-swatch {
+      width: 44px;
+      height: 44px;
+    }
+  }
+</style>

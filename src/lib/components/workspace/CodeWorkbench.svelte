@@ -5,8 +5,9 @@
   import { notify } from '$lib/util/notify';
   import { updateCodeInteraction, validatedState } from '$lib/util/state.svelte';
   import { closeWorkspacePanel } from '$lib/util/workspacePanels.svelte';
-  import { Check, RotateCcw, X } from 'lucide-svelte';
+  import { AlignLeft, Check, RotateCcw, X } from 'lucide-svelte';
 
+  let { embedded = false }: { embedded?: boolean } = $props();
   const initialCode = validatedState.current.code;
   let draft = $state(initialCode);
   let lastValid = $state(initialCode);
@@ -52,20 +53,33 @@
     draft = lastValid;
     errorMessage = '';
   };
+
+  const formatDraft = (): void => {
+    const formatted = draft
+      .replaceAll('\r\n', '\n')
+      .split('\n')
+      .map((line) => line.replace(/[\t ]+$/u, ''))
+      .join('\n')
+      .trim();
+    draft = formatted ? `${formatted}\n` : '';
+    errorMessage = '';
+  };
 </script>
 
 <section class="flex h-full min-h-0 flex-col" data-testid="code-workbench">
-  <header class="flex items-start justify-between gap-3 border-b border-border-dark p-3">
-    <div class="min-w-0">
-      <h2 class="text-sm font-semibold text-text">代码工作台</h2>
-      <p class="mt-1 text-xs text-text-muted">
-        当前格式：{getDiagramKeyword(lastValid) || '图表代码'}。校验通过后才会修改画布。
-      </p>
-    </div>
-    <Button size="icon" variant="ghost" aria-label="关闭代码工作台" onclick={closeWorkspacePanel}>
-      <X class="size-4" />
-    </Button>
-  </header>
+  {#if !embedded}
+    <header class="flex items-start justify-between gap-3 border-b border-border-dark p-3">
+      <div class="min-w-0">
+        <h2 class="text-sm font-semibold text-text">代码工作台</h2>
+        <p class="mt-1 text-xs text-text-muted">
+          当前格式：{getDiagramKeyword(lastValid) || '图表代码'}。校验通过后才会修改画布。
+        </p>
+      </div>
+      <Button size="icon" variant="ghost" aria-label="关闭代码工作台" onclick={closeWorkspacePanel}>
+        <X class="size-4" />
+      </Button>
+    </header>
+  {/if}
 
   <div class="flex min-h-0 flex-1 flex-col gap-2 p-3">
     <label class="text-xs font-medium text-text" for="diagram-code-draft">图表代码</label>
@@ -74,6 +88,7 @@
       class="min-h-0 flex-1 resize-none rounded-sm border border-border-dark bg-background p-3 font-mono text-[13px] leading-5 text-text outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
       bind:value={draft}
       spellcheck="false"
+      wrap="off"
       autocapitalize="off"
       autocomplete="off"
       aria-describedby={errorMessage ? 'diagram-code-error' : undefined}></textarea>
@@ -88,7 +103,11 @@
   </div>
 
   <footer
-    class="grid grid-cols-3 gap-2 border-t border-border-dark p-3 pb-[max(.75rem,env(safe-area-inset-bottom))]">
+    class="grid grid-cols-2 gap-2 border-t border-border-dark p-3 pb-[max(.75rem,env(safe-area-inset-bottom))] sm:grid-cols-4">
+    <Button variant="outline" onclick={formatDraft}>
+      <AlignLeft class="size-4" />
+      格式化
+    </Button>
     <Button variant="outline" onclick={restoreLastValid} title="恢复打开面板时的有效代码">
       <RotateCcw class="size-4" />
       恢复有效版

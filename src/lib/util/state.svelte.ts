@@ -269,6 +269,7 @@ let currentDiagramInitialState: State | undefined = storedDiagramInitial?.state;
 let currentDiagramInitialType = storedDiagramInitial?.diagramType ?? '';
 let captureNextValidAsInitial = !storedDiagramInitial;
 let processRevision = 0;
+let latestStateValidation: Promise<void> = Promise.resolve();
 let invalidRollbackTimer: ReturnType<typeof setTimeout> | undefined;
 const INVALID_ROLLBACK_DELAY_MS = 1200;
 
@@ -282,7 +283,6 @@ const processState = async (state: State) => {
     JSON.parse(state.mermaid);
   } catch (error) {
     processed.error = error as Error;
-    console.error(error);
     if (error && typeof error === 'object' && 'hash' in error) {
       try {
         let errorString = processed.error.toString();
@@ -334,26 +334,36 @@ const processSnapshot = (snapshot: State): void => {
   if (invalidRollbackTimer) clearTimeout(invalidRollbackTimer);
   invalidRollbackTimer = undefined;
   const revision = ++processRevision;
-  void processState(snapshot).then((processed) => {
-    if (revision !== processRevision) return;
-    if (processed.error) {
-      if (shouldRollbackInvalidState(snapshot)) {
-        restoreLastValidState();
-        return;
+  latestStateValidation = processState(snapshot).then((processed) => {
+    if (revision === processRevision) {
+      if (processed.error) {
+        if (shouldRollbackInvalidState(snapshot)) {
+          restoreLastValidState();
+          return;
+        }
+        if (lastValidState && snapshot.code !== lastValidState.code) {
+          invalidRollbackTimer = setTimeout(() => {
+            invalidRollbackTimer = undefined;
+            if (input.code === snapshot.code) restoreLastValidState();
+          }, INVALID_ROLLBACK_DELAY_MS);
+        }
       }
-      if (lastValidState && snapshot.code !== lastValidState.code) {
-        invalidRollbackTimer = setTimeout(() => {
-          invalidRollbackTimer = undefined;
-          if (input.code === snapshot.code) restoreLastValidState();
-        }, INVALID_ROLLBACK_DELAY_MS);
+      validatedCurrent = processed;
+      updateHash?.(processed.serialized);
+      if (!processed.error) {
+        rememberValidState(snapshot, processed.diagramType);
       }
-    }
-    validatedCurrent = processed;
-    updateHash?.(processed.serialized);
-    if (!processed.error) {
-      rememberValidState(snapshot, processed.diagramType);
     }
   });
+};
+
+export const waitForStateValidation = async (): Promise<void> => {
+  let pending = latestStateValidation;
+  await pending;
+  while (pending !== latestStateValidation) {
+    pending = latestStateValidation;
+    await pending;
+  }
 };
 
 const persistAndProcess = (): void => {

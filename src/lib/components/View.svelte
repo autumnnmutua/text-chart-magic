@@ -60,6 +60,7 @@
     type PacketFieldSize
   } from '$lib/util/diagramBranch';
   import { requestEditorFocus } from '$lib/util/editorFocus.svelte';
+  import { mobileWorkspace } from '$lib/util/mobileWorkspace.svelte';
   import { getQuadrantBounds, moveQuadrantPointByPixels } from '$lib/util/quadrantLayout';
   import {
     clearVisualSelection,
@@ -121,19 +122,22 @@
   import { Svg2Roughjs } from 'svg2roughjs';
 
   let {
+    isMobile = false,
     panZoomState = new PanZoomState(),
     shouldShowGrid = true
-  }: { panZoomState?: PanZoomState; shouldShowGrid?: boolean } = $props();
+  }: { isMobile?: boolean; panZoomState?: PanZoomState; shouldShowGrid?: boolean } = $props();
   let code = '';
   let config = '';
   let container: HTMLDivElement | undefined = $state();
   let rough: boolean;
   let visualStylesFingerprint = '';
   let visualPositionsFingerprint = '';
+  let selectedConnectionsFingerprint = '';
   let visualLayersFingerprint = '';
   let visualConnectionsFingerprint = '';
   let view: HTMLDivElement | undefined = $state();
   let error = $state(false);
+  let renderBusy = $state(false);
   let panZoom = true;
   let manualUpdate = true;
   let textEditInput: HTMLInputElement | undefined = $state();
@@ -237,6 +241,7 @@
         otherBounds: ClientBounds[];
         pointerClientStart: VisualPosition;
         pointerId?: number;
+        pointerType: string;
         pointerStart: VisualPosition;
         started: boolean;
         svg: SVGSVGElement;
@@ -293,6 +298,8 @@
   let viewportFitFrame = 0;
   let branchFocusFrame = 0;
   let connectionEditorRevision = 0;
+  const activeTouchPointers = new SvelteSet<number>();
+  const lastTextTargetByVisualId = new SvelteMap<string, Element>();
   let pendingBranchFocusBaseline:
     | {
         ids: SvelteSet<string>;
@@ -320,6 +327,16 @@
     if (next) updateCodeStore(next);
   };
 
+  const isInteractiveCanvasTarget = (target: EventTarget | null): boolean =>
+    target instanceof Element &&
+    Boolean(
+      target.closest(
+        '[data-visual-id], [data-architecture-group-id], [data-connection-endpoint], [data-connection-endpoint-hit], .face'
+      )
+    );
+
+  const isMobilePanMode = (): boolean => isMobile && mobileWorkspace.mode === 'pan';
+
   // Set up panZoom state observer to update the store when pan/zoom changes
   const setupPanZoomObserver = () => {
     panZoomState.onPanZoomChange = (pan, zoom, immediate = false) => {
@@ -331,6 +348,8 @@
       if (panZoomPersistTimer) clearTimeout(panZoomPersistTimer);
       panZoomPersistTimer = setTimeout(flushPanZoom, 100);
     };
+    panZoomState.shouldHandleCanvasGesture = (target, pointerCount) =>
+      pointerCount > 1 || isMobilePanMode() || !isInteractiveCanvasTarget(target);
   };
 
   const handlePanZoom = (state: State, graphDiv: SVGSVGElement) => {
@@ -463,6 +482,7 @@
   };
 
   const refreshVisualDocument = (graphDiv: SVGSVGElement, state: State) => {
+    lastTextTargetByVisualId.clear();
     if (getDiagramKeyword(state.code) === 'architecture-beta') {
       renderArchitectureGroups(graphDiv, state.code, new Set(visualSelection.ids));
     }
@@ -807,6 +827,12 @@
   const isPrimaryDragStart = (event: PointerEvent | MouseEvent): boolean =>
     event.button === 0 && (!('isPrimary' in event) || event.isPrimary);
 
+  const isDragPointerActive = (event: PointerEvent | MouseEvent): boolean =>
+    event.buttons === 1 ||
+    ('pointerType' in event &&
+      event.pointerType === 'touch' &&
+      activeTouchPointers.has(event.pointerId));
+
   const getMoodFaceTarget = (target: EventTarget | null): Element | undefined => {
     if (!(target instanceof Element)) return undefined;
     if (target.matches('.face')) return target;
@@ -855,7 +881,7 @@
 
   const startMoodDrag = (event: PointerEvent | MouseEvent) => {
     const face = getMoodFaceTarget(event.target);
-    if (!isPrimaryDragStart(event) || !isJourneyState() || !face) {
+    if (isMobilePanMode() || !isPrimaryDragStart(event) || !isJourneyState() || !face) {
       return;
     }
     const text = getEditableLabel(face, event);
@@ -886,12 +912,13 @@
   };
 
   const updateMoodDrag = (event: PointerEvent | MouseEvent) => {
-    if (!moodDrag || event.buttons !== 1) {
+    if (!moodDrag || !isDragPointerActive(event)) {
       return;
     }
+    const delta = moodDrag.startY - event.clientY;
+    if (!moodDrag.started && Math.abs(delta) < 7) return;
     event.preventDefault();
     event.stopPropagation();
-    const delta = moodDrag.startY - event.clientY;
     const nextScore = clampMoodScore(moodDrag.initialScore + Math.round(delta / 36));
     const nextCode = replaceJourneyScore(
       moodDrag.originalCode,
@@ -925,6 +952,7 @@
 
   const startQuadrantDrag = (event: PointerEvent | MouseEvent) => {
     if (
+      isMobilePanMode() ||
       !isPrimaryDragStart(event) ||
       !isQuadrantState() ||
       event.target instanceof Element === false
@@ -951,7 +979,7 @@
   };
 
   const updateQuadrantDrag = (event: PointerEvent | MouseEvent) => {
-    if (!quadrantDrag || event.buttons !== 1 || !view) return;
+    if (!quadrantDrag || !isDragPointerActive(event) || !view) return;
     const deltaX = event.clientX - quadrantDrag.startX;
     const deltaY = event.clientY - quadrantDrag.startY;
     if (!quadrantDrag.started && Math.hypot(deltaX, deltaY) < 4) return;
@@ -998,6 +1026,7 @@
 
   const startWardleyDrag = (event: PointerEvent | MouseEvent) => {
     if (
+      isMobilePanMode() ||
       !isPrimaryDragStart(event) ||
       !isWardleyState() ||
       event.target instanceof Element === false
@@ -1022,7 +1051,7 @@
   };
 
   const updateWardleyDrag = (event: PointerEvent | MouseEvent) => {
-    if (!wardleyDrag || event.buttons !== 1 || !view) return;
+    if (!wardleyDrag || !isDragPointerActive(event) || !view) return;
     const deltaX = event.clientX - wardleyDrag.startX;
     const deltaY = event.clientY - wardleyDrag.startY;
     if (!wardleyDrag.started && Math.hypot(deltaX, deltaY) < 4) return;
@@ -1188,7 +1217,7 @@
     event.pointerType === 'touch' ? TOUCH_CONNECTION_SNAP_PX : CONNECTION_SNAP_PX;
 
   const startConnectionInteraction = (event: PointerEvent) => {
-    if (!isPrimaryDragStart(event) || activeTextEdit) return;
+    if (isMobilePanMode() || !isPrimaryDragStart(event) || activeTextEdit) return;
     const endpointHandle =
       event.target instanceof Element
         ? event.target.closest<SVGCircleElement>(
@@ -1224,6 +1253,20 @@
       event.target instanceof Element
         ? event.target.closest<SVGGElement>('[data-visual-connection]')
         : null;
+    const touchNodeUnderConnection =
+      event.pointerType === 'touch' && connectionGroup
+        ? document
+            .elementsFromPoint(event.clientX, event.clientY)
+            .map((element) => getVisualDocumentTarget(element, visualDocument.current))
+            .find(
+              (item) => item?.layoutKind && !validatedState.current.visualConnections?.[item.id]
+            )
+        : undefined;
+    if (touchNodeUnderConnection) {
+      selectVisualElement(touchNodeUnderConnection);
+      suppressVisualClickUntil = performance.now() + 800;
+      return;
+    }
     const connectionSelection = connectionSelectionItem(connectionGroup?.dataset.visualId ?? '');
     if (connectionSelection) {
       event.preventDefault();
@@ -1282,7 +1325,8 @@
     const svg = connectionEndpointDrag?.svg ?? container?.querySelector<SVGSVGElement>('svg');
     if (!svg) return;
     if (connectionEndpointDrag) {
-      if (event.pointerId !== connectionEndpointDrag.pointerId || event.buttons !== 1) return;
+      if (event.pointerId !== connectionEndpointDrag.pointerId || !isDragPointerActive(event))
+        return;
       event.preventDefault();
       event.stopPropagation();
       const currentEndpoint = connectionEndpointDrag.current[connectionEndpointDrag.role];
@@ -1361,6 +1405,7 @@
 
   const startArchitectureGroupInteraction = (event: PointerEvent) => {
     if (
+      isMobilePanMode() ||
       !isPrimaryDragStart(event) ||
       currentDiagramKeyword() !== 'architecture-beta' ||
       activeTextEdit
@@ -1428,7 +1473,7 @@
     if (
       !architectureGroupDrag ||
       event.pointerId !== architectureGroupDrag.pointerId ||
-      event.buttons !== 1
+      !isDragPointerActive(event)
     ) {
       return;
     }
@@ -1541,6 +1586,23 @@
 
   type FreeLayoutKind = NonNullable<typeof blockDrag>['kind'];
 
+  const trackTouchPointerStart = (event: PointerEvent): void => {
+    if (event.pointerType !== 'touch') return;
+    activeTouchPointers.add(event.pointerId);
+    if (activeTouchPointers.size < 2) return;
+    cancelPointDrag();
+    cancelConnectionEndpointDrag();
+    cancelArchitectureGroupInteraction();
+    cancelBlockDrag();
+    cancelStructuralDrag();
+    cancelMarquee();
+    panZoomState.resumeInteraction();
+  };
+
+  const trackTouchPointerEnd = (event: PointerEvent): void => {
+    if (event.pointerType === 'touch') activeTouchPointers.delete(event.pointerId);
+  };
+
   const clientBoundsOf = (elements: readonly Element[]): ClientBounds => {
     const bounds = elements.map((element) => element.getBoundingClientRect());
     const left = Math.min(...bounds.map((item) => item.left));
@@ -1555,16 +1617,30 @@
     kind: FreeLayoutKind,
     getNodeId: (target: EventTarget | null) => string
   ) => {
-    if (!isPrimaryDragStart(event)) return;
-    const id = getNodeId(event.target);
+    if (isMobilePanMode() || !isPrimaryDragStart(event)) return;
+    const id =
+      getNodeId(event.target) ||
+      ('clientX' in event
+        ? document
+            .elementsFromPoint(event.clientX, event.clientY)
+            .map((element) => getNodeId(element))
+            .find(Boolean)
+        : '') ||
+      '';
     const svg = container?.querySelector<SVGSVGElement>('svg');
     const pointerStart = svg ? clientToSvgPoint(svg, event.clientX, event.clientY) : undefined;
     if (!id || !svg || !pointerStart) return;
     if (validatedState.current.visualLayers?.[id]?.locked) return;
-    const documentItem = getVisualDocumentTarget(event.target, visualDocument.current);
+    const documentItem =
+      visualDocument.current.find((item) => item.id === id) ??
+      getVisualDocumentTarget(event.target, visualDocument.current);
+    if (isMobile && mobileWorkspace.mode === 'multi' && !visualSelection.ids.includes(id)) {
+      return;
+    }
     if (documentItem && !visualSelection.ids.includes(id)) {
       selectVisualElement(documentItem, {
-        additive: event.shiftKey || event.ctrlKey || event.metaKey
+        additive:
+          event.shiftKey || event.ctrlKey || event.metaKey || visualSelection.isSelectionMode
       });
     }
     const selectedIds = new Set(visualSelection.ids.includes(id) ? visualSelection.ids : [id]);
@@ -1605,6 +1681,7 @@
       pointerClientStart: { x: event.clientX, y: event.clientY },
       pointerId,
       pointerStart,
+      pointerType: 'pointerType' in event ? event.pointerType : 'mouse',
       started: false,
       svg
     };
@@ -1625,27 +1702,40 @@
     startFreeLayoutDrag(event, 'architecture', getArchitectureNodeId);
   };
 
-  const stopCanvasGestureFromFreeLayoutNode = (event: MouseEvent | TouchEvent) => {
-    const keyword = currentDiagramKeyword();
-    const id = keyword.startsWith('c4')
-      ? getC4NodeId(event.target)
-      : keyword === 'block-beta'
-        ? getBlockNodeId(event.target)
-        : keyword === 'architecture-beta'
-          ? getArchitectureNodeId(event.target)
-          : '';
-    if (!id) return;
+  const stopCanvasGestureFromInteractiveNode = (event: MouseEvent) => {
+    if (isMobilePanMode() || !isInteractiveCanvasTarget(event.target)) return;
     event.stopPropagation();
-    if (event.type === 'touchstart') event.preventDefault();
   };
 
   const updateBlockDrag = (event: PointerEvent | MouseEvent) => {
-    if (!blockDrag || event.buttons !== 1) return;
-    const rawClientDelta = {
+    if (!blockDrag || !isDragPointerActive(event)) return;
+    const requestedClientDelta = {
       x: event.clientX - blockDrag.pointerClientStart.x,
       y: event.clientY - blockDrag.pointerClientStart.y
     };
     const viewBounds = view?.getBoundingClientRect();
+    const keepVisible = blockDrag.pointerType === 'touch' ? 44 : 24;
+    const rawClientDelta = viewBounds
+      ? {
+          x: Math.min(
+            Math.max(
+              requestedClientDelta.x,
+              viewBounds.left + keepVisible - blockDrag.initialBounds.right
+            ),
+            viewBounds.right - keepVisible - blockDrag.initialBounds.left
+          ),
+          y: Math.min(
+            Math.max(
+              requestedClientDelta.y,
+              viewBounds.top + keepVisible - blockDrag.initialBounds.bottom
+            ),
+            viewBounds.bottom - keepVisible - blockDrag.initialBounds.top
+          )
+        }
+      : requestedClientDelta;
+    const dragThreshold = blockDrag.pointerType === 'touch' ? 8 : 4;
+    if (!blockDrag.started && Math.hypot(rawClientDelta.x, rawClientDelta.y) < dragThreshold)
+      return;
     const snap = calculateSnap({
       deltaX: rawClientDelta.x,
       deltaY: rawClientDelta.y,
@@ -1662,7 +1752,6 @@
     );
     if (!point) return;
     const delta = { x: point.x - blockDrag.pointerStart.x, y: point.y - blockDrag.pointerStart.y };
-    if (!blockDrag.started && Math.hypot(delta.x, delta.y) < 5) return;
     if (!blockDrag.started && blockDrag.pointerId !== undefined && container?.setPointerCapture) {
       try {
         container.setPointerCapture(blockDrag.pointerId);
@@ -1920,6 +2009,8 @@
 
   const startStructuralDrag = (event: PointerEvent | MouseEvent) => {
     if (
+      isMobilePanMode() ||
+      (isMobile && mobileWorkspace.mode === 'multi') ||
       !isPrimaryDragStart(event) ||
       !supportsStructuralDrag() ||
       event.target instanceof Element === false
@@ -1939,7 +2030,7 @@
   };
 
   const updateStructuralDrag = (event: PointerEvent | MouseEvent) => {
-    if (!structuralDrag || event.buttons !== 1) return;
+    if (!structuralDrag || !isDragPointerActive(event)) return;
     if (
       !structuralDrag.started &&
       Math.hypot(event.clientX - structuralDrag.startX, event.clientY - structuralDrag.startY) < 8
@@ -2071,6 +2162,7 @@
   };
 
   const handleInlineTextKeydown = (event: KeyboardEvent) => {
+    if (event.isComposing) return;
     if (event.key === 'Enter') {
       event.preventDefault();
       finishInlineTextEdit();
@@ -2083,6 +2175,7 @@
   };
 
   const handleVisualTextFocus = (event: MouseEvent) => {
+    if (isMobilePanMode()) return;
     if (connectionEditor.isCreating || suppressNextVisualClick) {
       suppressNextVisualClick = false;
       event.preventDefault();
@@ -2119,6 +2212,10 @@
     const isIndependentConnection = Boolean(
       documentTarget && validatedState.current.visualConnections?.[documentTarget.id]
     );
+    const selectedTextLeaf = getTextLeafElement(event.target, event);
+    if (documentTarget && selectedTextLeaf) {
+      lastTextTargetByVisualId.set(documentTarget.id, selectedTextLeaf);
+    }
     if (!text && !styleId && !documentTarget) {
       branchTarget = undefined;
       colorTarget = undefined;
@@ -2383,17 +2480,12 @@
     setupPanZoomObserver();
     const containerElement = container;
     const captureOptions = { capture: true };
-    const touchCaptureOptions = { capture: true, passive: false };
     containerElement?.addEventListener(
       'mousedown',
-      stopCanvasGestureFromFreeLayoutNode,
+      stopCanvasGestureFromInteractiveNode,
       captureOptions
     );
-    containerElement?.addEventListener(
-      'touchstart',
-      stopCanvasGestureFromFreeLayoutNode,
-      touchCaptureOptions
-    );
+    containerElement?.addEventListener('pointerdown', trackTouchPointerStart, captureOptions);
     containerElement?.addEventListener('pointerdown', startConnectionInteraction, captureOptions);
     containerElement?.addEventListener(
       'pointerdown',
@@ -2418,6 +2510,7 @@
     window.addEventListener('pointermove', updateBlockDrag, captureOptions);
     window.addEventListener('pointermove', updateStructuralDrag, captureOptions);
     window.addEventListener('pointerup', finishMoodDrag, captureOptions);
+    window.addEventListener('pointerup', trackTouchPointerEnd, captureOptions);
     window.addEventListener('pointerup', finishConnectionEndpointDrag, captureOptions);
     window.addEventListener('pointerup', finishArchitectureGroupInteraction, captureOptions);
     window.addEventListener('pointerup', finishMarquee, captureOptions);
@@ -2426,6 +2519,7 @@
     window.addEventListener('pointerup', finishBlockDrag, captureOptions);
     window.addEventListener('pointerup', finishStructuralDrag, captureOptions);
     window.addEventListener('pointercancel', cancelStructuralDrag, captureOptions);
+    window.addEventListener('pointercancel', trackTouchPointerEnd, captureOptions);
     window.addEventListener('pointercancel', cancelConnectionEndpointDrag, captureOptions);
     window.addEventListener('pointercancel', cancelArchitectureGroupInteraction, captureOptions);
     window.addEventListener('pointercancel', cancelMarquee, captureOptions);
@@ -2443,14 +2537,10 @@
     return () => {
       containerElement?.removeEventListener(
         'mousedown',
-        stopCanvasGestureFromFreeLayoutNode,
+        stopCanvasGestureFromInteractiveNode,
         captureOptions
       );
-      containerElement?.removeEventListener(
-        'touchstart',
-        stopCanvasGestureFromFreeLayoutNode,
-        touchCaptureOptions
-      );
+      containerElement?.removeEventListener('pointerdown', trackTouchPointerStart, captureOptions);
       containerElement?.removeEventListener(
         'pointerdown',
         startConnectionInteraction,
@@ -2479,6 +2569,7 @@
       window.removeEventListener('pointermove', updateBlockDrag, captureOptions);
       window.removeEventListener('pointermove', updateStructuralDrag, captureOptions);
       window.removeEventListener('pointerup', finishMoodDrag, captureOptions);
+      window.removeEventListener('pointerup', trackTouchPointerEnd, captureOptions);
       window.removeEventListener('pointerup', finishConnectionEndpointDrag, captureOptions);
       window.removeEventListener('pointerup', finishArchitectureGroupInteraction, captureOptions);
       window.removeEventListener('pointerup', finishMarquee, captureOptions);
@@ -2487,6 +2578,7 @@
       window.removeEventListener('pointerup', finishBlockDrag, captureOptions);
       window.removeEventListener('pointerup', finishStructuralDrag, captureOptions);
       window.removeEventListener('pointercancel', cancelStructuralDrag, captureOptions);
+      window.removeEventListener('pointercancel', trackTouchPointerEnd, captureOptions);
       window.removeEventListener('pointercancel', cancelConnectionEndpointDrag, captureOptions);
       window.removeEventListener(
         'pointercancel',
@@ -2507,6 +2599,7 @@
       cancelStructuralDrag();
       cancelConnectionEndpointDrag();
       cancelMarquee();
+      activeTouchPointers.clear();
       flushPanZoom();
       if (connectionRenderFrame) cancelAnimationFrame(connectionRenderFrame);
       if (linkedConnectionRenderFrame) cancelAnimationFrame(linkedConnectionRenderFrame);
@@ -2539,6 +2632,26 @@
     const ids = visualSelection.ids;
     const primaryId = visualSelection.current?.id ?? '';
     const graph = container?.querySelector<SVGSVGElement>('svg');
+    const nextSelectedConnectionsFingerprint = ids
+      .filter((id) => validatedState.current.visualConnections?.[id])
+      .sort()
+      .join('|');
+    const hasEndpointHandles = Boolean(graph?.querySelector('[data-connection-endpoint]'));
+    const shouldShowEndpointHandles = Boolean(nextSelectedConnectionsFingerprint);
+    if (graph && !shouldShowEndpointHandles && hasEndpointHandles) {
+      graph
+        .querySelectorAll(
+          '[data-connection-endpoint], [data-connection-endpoint-hit], [data-visual-connection-anchors]'
+        )
+        .forEach((element) => element.remove());
+    } else if (
+      graph &&
+      shouldShowEndpointHandles &&
+      (selectedConnectionsFingerprint !== nextSelectedConnectionsFingerprint || !hasEndpointHandles)
+    ) {
+      renderConnectionPreview(graph);
+    }
+    selectedConnectionsFingerprint = nextSelectedConnectionsFingerprint;
     if (graph && currentDiagramKeyword() === 'architecture-beta') {
       updateArchitectureGroupSelection(graph, validatedState.current.code, new Set(ids));
     }
@@ -2575,18 +2688,38 @@
     handledEditRequestId = request.id;
     const item = visualDocument.current.find(({ id }) => id === request.visualId);
     if (!item || validatedState.current.visualLayers?.[item.id]?.locked) return;
-    startInlineTextEditForTarget(item.element);
+    const lastTarget = lastTextTargetByVisualId.get(item.id);
+    startInlineTextEditForTarget(lastTarget?.isConnected ? lastTarget : item.element);
   });
 
-  // Queue state changes to avoid race condition
-  let pendingStateChange = Promise.resolve();
+  // Render serially, but collapse queued editor updates to the newest validated state.
+  // This prevents stale intermediate SVGs from replacing a user's latest input.
+  let pendingRenderState: ValidatedState | undefined;
+  let isDrainingRenderQueue = false;
+  const drainRenderQueue = async (): Promise<void> => {
+    if (isDrainingRenderQueue) return;
+    isDrainingRenderQueue = true;
+    renderBusy = true;
+    try {
+      while (pendingRenderState) {
+        const state = pendingRenderState;
+        pendingRenderState = undefined;
+        try {
+          await handleStateChange(state);
+        } catch (renderError: unknown) {
+          console.error('Queued diagram render failed', renderError);
+        }
+      }
+    } finally {
+      isDrainingRenderQueue = false;
+      renderBusy = false;
+      if (pendingRenderState) void drainRenderQueue();
+    }
+  };
+
   $effect(() => {
-    const state = validatedState.current;
-    pendingStateChange = pendingStateChange.then(() =>
-      handleStateChange(state).catch((renderError: unknown) => {
-        console.error('Queued diagram render failed', renderError);
-      })
-    );
+    pendingRenderState = validatedState.current;
+    void drainRenderQueue();
   });
 </script>
 
@@ -2595,12 +2728,21 @@
 <div
   id="view"
   bind:this={view}
+  aria-busy={renderBusy}
+  data-mobile-editor={isMobile ? 'true' : undefined}
   class={[
-    'relative h-full w-full overflow-hidden',
+    'relative h-full min-w-0 w-full overflow-hidden',
     shouldShowGrid && `grid-bg-${mode.current}`,
-    error && 'opacity-50'
+    error && 'pointer-events-none opacity-50',
+    renderBusy && 'pointer-events-none cursor-wait'
   ]}>
-  <div id="container" bind:this={container} class="box-border h-full w-full overflow-auto py-14">
+  <div
+    id="container"
+    bind:this={container}
+    class={[
+      'box-border h-full min-w-0 w-full',
+      isMobile ? 'touch-none overflow-hidden pt-8 pb-32' : 'overflow-auto py-14'
+    ]}>
   </div>
   <ConnectionToolbar />
   {#if connectionEditor.isCreating}
@@ -2771,16 +2913,40 @@
     </Button>
   {/if}
   {#if activeTextEdit && activeTextEditReady}
-    <input
-      bind:this={textEditInput}
-      use:focusInlineTextInput
-      aria-label="图中文字编辑"
-      class="absolute z-30 rounded-md border border-accent bg-background px-3 py-1 text-sm text-foreground shadow-lg outline-none ring-2 ring-accent/30"
-      style={`left: ${activeTextEdit.x}px; top: ${activeTextEdit.y}px; width: ${activeTextEdit.width}px; height: ${activeTextEdit.height}px;`}
-      value={activeTextEdit.currentText}
-      onblur={finishInlineTextEdit}
-      oninput={(event) => applyInlineTextEdit(event.currentTarget.value)}
-      onkeydown={handleInlineTextKeydown} />
+    {#if isMobile}
+      <div
+        class="absolute right-[max(.5rem,env(safe-area-inset-right))] left-[max(.5rem,env(safe-area-inset-left))] z-[90] rounded-md border border-border-dark bg-card p-2 shadow-2xl"
+        style="bottom: calc(var(--mobile-keyboard-height, 0px) + max(.5rem, env(safe-area-inset-bottom)));"
+        data-testid="mobile-text-editor">
+        <label class="mb-1 block text-xs font-medium" for="mobile-visual-text-input">
+          编辑文字
+        </label>
+        <div class="flex items-center gap-2">
+          <input
+            id="mobile-visual-text-input"
+            bind:this={textEditInput}
+            use:focusInlineTextInput
+            aria-label="图中文字编辑"
+            class="h-11 min-w-0 flex-1 rounded-sm border border-accent bg-background px-3 text-base text-foreground outline-none ring-2 ring-accent/30"
+            value={activeTextEdit.currentText}
+            oninput={(event) => applyInlineTextEdit(event.currentTarget.value)}
+            onkeydown={handleInlineTextKeydown} />
+          <Button class="h-11 px-3" variant="ghost" onclick={cancelInlineTextEdit}>取消</Button>
+          <Button class="h-11 px-3" onclick={finishInlineTextEdit}>完成</Button>
+        </div>
+      </div>
+    {:else}
+      <input
+        bind:this={textEditInput}
+        use:focusInlineTextInput
+        aria-label="图中文字编辑"
+        class="absolute z-30 rounded-md border border-accent bg-background px-3 py-1 text-sm text-foreground shadow-lg outline-none ring-2 ring-accent/30"
+        style={`left: ${activeTextEdit.x}px; top: ${activeTextEdit.y}px; width: ${activeTextEdit.width}px; height: ${activeTextEdit.height}px;`}
+        value={activeTextEdit.currentText}
+        onblur={finishInlineTextEdit}
+        oninput={(event) => applyInlineTextEdit(event.currentTarget.value)}
+        onkeydown={handleInlineTextKeydown} />
+    {/if}
   {/if}
 </div>
 
@@ -2865,5 +3031,31 @@
     fill: #f97316;
     stroke: #fff7ed;
     stroke-width: 3;
+  }
+
+  @media (pointer: coarse) {
+    :global(.visual-connection [data-connection-endpoint]),
+    :global(.visual-connection [data-connection-endpoint-hit]) {
+      stroke-width: 4;
+    }
+
+    :global([data-architecture-group-resize]) {
+      r: 8px;
+      stroke-width: 3px;
+    }
+  }
+
+  @media (max-width: 767px) {
+    .branch-button,
+    .color-button,
+    .delete-button {
+      display: none;
+    }
+
+    :global(.diagram-special-button),
+    .timeline-order-button {
+      min-height: 44px;
+      min-width: 44px;
+    }
   }
 </style>

@@ -245,9 +245,13 @@ test.describe('图上分支编辑', () => {
     await page.keyboard.type(`mindmap
   root((主题))
     已有分支`);
+    await expect.poll(() => getStoredCode(page)).toContain('已有分支');
     await expect(page.locator('#view')).toContainText('主题');
+    await expect(page.locator('#view')).toHaveAttribute('aria-busy', 'false', {
+      timeout: 15_000
+    });
 
-    await page.locator('#view').getByText('主题', { exact: true }).click({ force: true });
+    await page.locator('#view').getByText('主题', { exact: true }).click();
     await expect(page.getByRole('button', { name: '分支' })).toBeVisible();
     await page.getByRole('button', { name: '分支' }).click();
 

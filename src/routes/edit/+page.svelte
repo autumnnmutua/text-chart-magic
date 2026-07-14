@@ -10,13 +10,13 @@
   import Preset from '$/components/Preset.svelte';
   import SyncRoughToolbar from '$/components/SyncRoughToolbar.svelte';
   import * as Resizable from '$/components/ui/resizable';
-  import { Button } from '$/components/ui/button';
   import { Switch } from '$/components/ui/switch';
   import { Toggle } from '$/components/ui/toggle';
   import VersionSecurityToolbar from '$/components/VersionSecurityToolbar.svelte';
   import View from '$/components/View.svelte';
   import SelectionToolbar from '$lib/components/workspace/SelectionToolbar.svelte';
   import WorkspaceController from '$lib/components/workspace/WorkspaceController.svelte';
+  import MobileSheet from '$lib/components/workspace/MobileSheet.svelte';
   import WorkspaceQuickToolbar from '$lib/components/workspace/WorkspaceQuickToolbar.svelte';
   import type { EditorMode, Tab } from '$/types';
   import { PanZoomState } from '$/util/panZoom';
@@ -25,7 +25,7 @@
   import { initHandler } from '$/util/util';
   import { visualSelection } from '$lib/util/visualSelection.svelte';
   import { onMount } from 'svelte';
-  import { X } from 'lucide-svelte';
+  import { PanelsTopLeft } from 'lucide-svelte';
   import CodeIcon from '~icons/custom/code';
   import HistoryIcon from '~icons/material-symbols/history';
   import GearIcon from '~icons/material-symbols/settings-outline-rounded';
@@ -78,16 +78,19 @@
   });
 </script>
 
-<div class="flex h-full flex-col overflow-hidden">
+<div
+  class="relative flex h-full min-w-0 flex-col overflow-hidden pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pl-[env(safe-area-inset-left)]">
   {#snippet mobileToggle()}
-    <div class="flex items-center gap-2">
-      编辑 <Switch
+    <div class="flex min-w-32 items-center justify-end gap-1 text-xs">
+      <span class={isViewMode ? 'text-muted-foreground' : 'font-medium text-foreground'}>代码</span>
+      <Switch
         id="editorMode"
         class="data-[state=checked]:bg-accent"
         bind:checked={isViewMode}
         onclick={() => {
           logEvent('mobileViewToggle');
-        }} /> 预览
+        }} />
+      <span class={isViewMode ? 'font-medium text-foreground' : 'text-muted-foreground'}>画布</span>
     </div>
   {/snippet}
 
@@ -101,38 +104,52 @@
     <div
       class={[
         'size-full',
-        isMobile && ['w-[200%] duration-300', isViewMode && '-translate-x-1/2']
+        isMobile && [
+          'w-[200%] transition-transform duration-200 ease-out',
+          isViewMode && '-translate-x-1/2'
+        ]
       ]}>
       <Resizable.PaneGroup
         direction="horizontal"
         autoSaveId="liveEditor"
-        class="gap-4 p-2 pt-0 sm:gap-0 sm:p-6 sm:pt-0">
+        class={isMobile ? 'gap-0 p-0' : 'gap-0 p-6 pt-0'}>
         <Resizable.Pane bind:this={editorPane} defaultSize={30} minSize={15}>
-          <div class="flex h-full min-h-0 flex-col gap-4 overflow-y-auto pr-1 sm:gap-6">
-            <div class="flex min-h-40 shrink-0 flex-col">
-              {#if visualSelection.isColorPanelOpen && !isMobile}
-                <ColorPickerPanel />
-              {:else}
-                <Card
-                  onselect={tabSelectHandler}
-                  isOpen
-                  tabs={editorTabs}
-                  activeTabID={validatedState.current.editorMode}
-                  isClosable={false}>
-                  <Editor {isMobile} />
-                </Card>
-              {/if}
-            </div>
+          {#if !isMobile || !isViewMode}
+            <div
+              class={[
+                'flex h-full min-h-0 flex-col overflow-y-auto',
+                isMobile ? 'gap-3 px-2 pb-[max(.75rem,env(safe-area-inset-bottom))]' : 'gap-6 pr-1'
+              ]}>
+              <div class={['flex shrink-0 flex-col', isMobile ? 'min-h-[56dvh]' : 'min-h-40']}>
+                {#if visualSelection.isColorPanelOpen && !isMobile}
+                  <ColorPickerPanel />
+                {:else}
+                  <Card
+                    onselect={tabSelectHandler}
+                    isOpen
+                    tabs={editorTabs}
+                    activeTabID={validatedState.current.editorMode}
+                    isClosable={false}>
+                    <Editor {isMobile} />
+                  </Card>
+                {/if}
+              </div>
 
-            <div class="group flex flex-wrap justify-between gap-4 sm:gap-6">
-              <Preset />
-              <Actions />
+              <div class="group flex flex-wrap justify-between gap-4 sm:gap-6">
+                <Preset />
+                <Actions />
+              </div>
             </div>
-          </div>
+          {/if}
         </Resizable.Pane>
         <Resizable.Handle class="mr-1 hidden opacity-0 sm:block" />
-        <Resizable.Pane minSize={15} class="relative flex h-full flex-1 flex-col overflow-hidden">
-          <View {panZoomState} shouldShowGrid={validatedState.current.grid} />
+        <Resizable.Pane
+          minSize={15}
+          class={[
+            'relative flex h-full flex-1 flex-col overflow-hidden',
+            isMobile && !isViewMode && 'invisible'
+          ]}>
+          <View {isMobile} {panZoomState} shouldShowGrid={validatedState.current.grid} />
           {#if !isMobile}
             <WorkspaceQuickToolbar />
             <SelectionToolbar />
@@ -141,7 +158,9 @@
             {isMobile}
             {panZoomState}
             onOpenHistory={() => (isHistoryOpen = true)} />
-          <div class="absolute top-0 right-0"><PanZoomToolbar {panZoomState} /></div>
+          {#if !isMobile}
+            <div class="absolute top-0 right-0"><PanZoomToolbar {panZoomState} /></div>
+          {/if}
           {#if !isMobile}
             <div class="absolute right-0 bottom-0"><VersionSecurityToolbar /></div>
             <div class="absolute bottom-0 left-5"><SyncRoughToolbar /></div>
@@ -157,21 +176,13 @@
     </div>
   </div>
   {#if isMobile && isHistoryOpen}
-    <aside
-      class="fixed inset-x-0 bottom-0 z-[80] flex h-[min(82dvh,760px)] flex-col rounded-t-md border border-border-dark bg-card pb-[env(safe-area-inset-bottom)] shadow-2xl"
-      aria-label="手机历史记录">
-      <header class="flex h-12 shrink-0 items-center justify-between border-b px-3">
-        <span class="text-sm font-semibold">保存与恢复</span>
-        <Button
-          size="icon"
-          variant="ghost"
-          title="关闭历史记录"
-          aria-label="关闭历史记录"
-          onclick={() => (isHistoryOpen = false)}><X class="size-4" /></Button>
-      </header>
-      <div class="min-h-0 flex-1 overflow-hidden p-2">
-        <History />
+    <MobileSheet title="历史记录" ariaLabel="手机历史记录" onClose={() => (isHistoryOpen = false)}>
+      <div class="flex h-full min-h-0 flex-col p-2">
+        <div class="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
+          <PanelsTopLeft class="size-4" />保存、撤回和恢复使用同一份图表数据
+        </div>
+        <div class="min-h-0 flex-1 overflow-hidden"><History /></div>
       </div>
-    </aside>
+    </MobileSheet>
   {/if}
 </div>
