@@ -1,5 +1,5 @@
 export type MobileToolMode = 'connection' | 'multi' | 'pan' | 'select';
-export type MobileWorkspaceSheet = 'align' | 'more';
+export type MobileWorkspaceSheet = 'align' | 'diagrams' | 'more';
 
 let enabled = $state(false);
 let keyboardOpen = $state(false);
@@ -12,6 +12,20 @@ export interface MobileViewportMetrics {
   obscuredHeight: number;
   visualHeight: number;
 }
+
+export interface MobileSheetStops {
+  collapsed: number;
+  expanded: number;
+}
+
+export const calculateMobileSheetStops = (viewportHeight: number): MobileSheetStops => {
+  const height = Number.isFinite(viewportHeight) ? Math.max(viewportHeight, 1) : 1;
+  const available = Math.max(1, height - 8);
+  const minimum = Math.min(available, Math.max(176, height * 0.46));
+  const expanded = Math.min(available, Math.max(minimum, height * 0.82));
+  const collapsed = Math.min(expanded, Math.max(minimum, height * 0.58));
+  return { collapsed, expanded };
+};
 
 export const calculateMobileViewportMetrics = ({
   innerHeight,

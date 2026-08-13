@@ -4,10 +4,15 @@ import { getBlockNodeId } from './blockFreeLayout';
 import { getC4NodeId } from './c4FreeLayout';
 import { getDiagramKeyword } from './diagramBranch';
 import type { VisualDocumentItem } from './visualDocument.svelte';
-import { collectEditableSourceText, normalizeVisibleText } from './visualTextEdit';
+import {
+  collectEditableSourceText,
+  getEditableVisualLabel,
+  normalizeVisibleText
+} from './visualTextEdit';
 
 const semanticSelector = [
   'g[data-visual-connection]',
+  'g[data-visual-element]',
   'g[data-architecture-group-id]',
   'g[data-c4-id]',
   'g[data-architecture-id]',
@@ -38,6 +43,7 @@ const fixedSemanticDiagrams = new Set([
 const parseRenderedSourceId = (id: string): string =>
   id.match(/(?:^|-)flowchart-([A-Za-z][A-Za-z0-9_]*)-\d+$/)?.[1] ||
   id.match(/(?:^|-)classId-(.+)-\d+$/)?.[1] ||
+  id.match(/(?:^|-)entity-([A-Za-z][\w-]*?)(?:-\d+)?$/i)?.[1] ||
   id.match(/(?:^|-)(?:requirement|element)-([A-Za-z][\w-]*)-\d+$/i)?.[1] ||
   '';
 
@@ -46,6 +52,7 @@ const sourceIdFromNode = (node: Element): string => {
   const styleId = node.getAttribute('data-style-id') ?? '';
   return (
     (node.getAttribute('data-visual-connection') ? node.getAttribute('data-visual-id') : '') ||
+    (node.getAttribute('data-visual-element') ? node.getAttribute('data-visual-id') : '') ||
     node.getAttribute('data-architecture-group-id') ||
     getC4NodeId(node) ||
     getArchitectureNodeId(node) ||
@@ -173,7 +180,7 @@ const applySourceHierarchy = (items: VisualDocumentItem[], hierarchy: SourceHier
 export const getVisualSourceId = (target: EventTarget | null): string => {
   if (!(target instanceof Element)) return '';
   const semanticNode = target.closest<Element>(
-    'g[data-c4-id], g[data-architecture-id], g.node, .requirement, .element'
+    'g[data-visual-element], g[data-c4-id], g[data-architecture-id], g.node, .requirement, .element'
   );
   return sourceIdFromNode(semanticNode ?? target);
 };
@@ -207,6 +214,7 @@ const layoutKindFromElement = (
   element: Element,
   keyword: string
 ): VisualDocumentItem['layoutKind'] => {
+  if (element.matches('[data-visual-element]')) return 'overlay';
   if (getC4NodeId(element)) return 'c4';
   if (getArchitectureNodeId(element)) return 'architecture';
   if (keyword === 'block-beta' && getBlockNodeId(element)) return 'block';
@@ -214,8 +222,9 @@ const layoutKindFromElement = (
 };
 
 const ensureVisualIdentity = (element: Element, keyword: string, index: number): string => {
-  const layoutId =
-    getC4NodeId(element) || getArchitectureNodeId(element) || getBlockNodeId(element);
+  const layoutId = element.getAttribute('data-visual-element')
+    ? element.getAttribute('data-visual-id')
+    : getC4NodeId(element) || getArchitectureNodeId(element) || getBlockNodeId(element);
   const styleId = element.getAttribute('data-style-id');
   const id = layoutId || styleId || element.id || `visual-${index}`;
   element.setAttribute('data-visual-id', id);
@@ -253,7 +262,7 @@ export const buildVisualDocument = (graph: SVGSVGElement, code: string): VisualD
     const kind = kindFromElement(element);
     const visibleLabel = labelFromElement(element);
     if (!visibleLabel && kind !== 'edge') return;
-    const label = visibleLabel || '连线';
+    const label = getEditableVisualLabel(code, visibleLabel) || visibleLabel || '连线';
     const occurrence = labelOccurrences.get(label) ?? 0;
     const primitiveText = kind === 'text' && element.matches('text, foreignObject');
     const labelKey = normalizeVisibleText(label).toLocaleLowerCase();

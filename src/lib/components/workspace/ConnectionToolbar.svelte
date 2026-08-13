@@ -11,7 +11,16 @@
     openVisualColorPanel,
     visualSelection
   } from '$lib/util/visualSelection.svelte';
-  import { ArrowLeftRight, ArrowRight, Minus, Palette, Plus, Repeat2, Trash2 } from 'lucide-svelte';
+  import {
+    ArrowLeftRight,
+    ArrowRight,
+    Eraser,
+    Minus,
+    Palette,
+    Plus,
+    Repeat2,
+    Trash2
+  } from 'lucide-svelte';
 
   const connection = $derived(
     visualSelection.current
@@ -36,8 +45,17 @@
   });
 
   const commitLabel = (): void => {
-    if (!connection || labelDraft === connection.label) return;
-    updateVisualConnection({ ...connection, label: labelDraft.trim().slice(0, 240) });
+    if (!connection) return;
+    const normalized = labelDraft.trim().slice(0, 240);
+    labelDraft = normalized;
+    if (normalized === connection.label) return;
+    updateVisualConnection({ ...connection, label: normalized });
+  };
+
+  const clearLabel = (): void => {
+    if (!connection?.label) return;
+    labelDraft = '';
+    updateVisualConnection({ ...connection, label: '' });
   };
 
   const remove = (): void => {
@@ -59,10 +77,21 @@
         if (event.isComposing) return;
         if (event.key === 'Enter') event.currentTarget.blur();
         if (event.key === 'Escape') {
+          event.preventDefault();
+          event.stopPropagation();
           labelDraft = connection.label;
           event.currentTarget.blur();
         }
       }} />
+    <Button
+      size="icon"
+      variant="ghost"
+      title="清除箭头文字"
+      aria-label="清空关系标签"
+      disabled={!connection.label}
+      onclick={clearLabel}>
+      <Eraser class="size-4" />
+    </Button>
     <Button
       size="icon"
       variant={connection.direction === 'none' ? 'accent' : 'ghost'}

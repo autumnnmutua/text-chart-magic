@@ -32,7 +32,7 @@ describe('readJSON', () => {
 
 describe('writeJSON', () => {
   it('round-trips values through localStorage as JSON', () => {
-    writeJSON('key', { nested: { value: 2 } });
+    expect(writeJSON('key', { nested: { value: 2 } })).toBe(true);
     expect(window.localStorage.getItem('key')).toBe('{"nested":{"value":2}}');
     expect(readJSON('key', {})).toEqual({ nested: { value: 2 } });
   });
@@ -41,7 +41,7 @@ describe('writeJSON', () => {
     const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
       throw new DOMException('quota exceeded', 'QuotaExceededError');
     });
-    expect(() => writeJSON('full', { value: 1 })).not.toThrow();
+    expect(writeJSON('full', { value: 1 })).toBe(false);
     setItem.mockRestore();
   });
 });
@@ -63,7 +63,19 @@ describe('persisted', () => {
     const counter = persisted('counter', 0);
     counter.value = 42;
     expect(counter.value).toBe(42);
+    expect(counter.lastWriteSucceeded).toBe(true);
     expect(window.localStorage.getItem('counter')).toBe('42');
+  });
+
+  it('keeps the in-memory value but reports a blocked write', () => {
+    const counter = persisted('counter', 0);
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('quota exceeded', 'QuotaExceededError');
+    });
+    counter.value = 42;
+    expect(counter.value).toBe(42);
+    expect(counter.lastWriteSucceeded).toBe(false);
+    setItem.mockRestore();
   });
 
   it('uses the initial value when storage holds a literal null', () => {

@@ -43,6 +43,10 @@
   const align = (command: AlignmentCommand): void => {
     if (alignSelected(command)) notify('已完成批量对齐，可撤回恢复。');
   };
+
+  $effect(() => {
+    if (!canAlign) alignOpen = false;
+  });
 </script>
 
 {#if visualSelection.count > 0 || visualSelection.isSelectionMode}
@@ -96,6 +100,7 @@
           class="hover:text-destructive"
           title="批量删除"
           aria-label="移除所选元素"
+          disabled={allLocked}
           onclick={deleteSelectedElements}>
           <Trash2 class="size-4" />
         </Button>

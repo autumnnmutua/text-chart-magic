@@ -7,6 +7,7 @@
   import Tabs from './Tabs.svelte';
 
   interface Props {
+    fillHeight?: boolean;
     isClosable?: boolean;
     isOpen?: boolean;
     isStackable?: boolean;
@@ -23,6 +24,7 @@
   }
 
   let {
+    fillHeight = false,
     isClosable = true,
     isOpen = false,
     isStackable = false,
@@ -63,15 +65,17 @@
 
 <div
   class={[
-    'card flex h-fit flex-col overflow-hidden rounded-lg border-2 border-muted',
+    'card flex flex-col overflow-hidden rounded-lg border-2 border-muted',
+    fillHeight ? 'h-full min-h-0' : 'h-fit',
     isOpen && 'isOpen flex-grow',
     isStackable ? 'flex-1 group-has-[.isOpen]:w-full group-has-[.isOpen]:flex-none' : 'w-full'
   ]}>
   <div
     role="toolbar"
-    tabindex="0"
+    tabindex={isClosable ? 0 : undefined}
     class={[
-      'flex h-11 flex-none cursor-pointer items-center justify-between bg-muted p-2 whitespace-nowrap',
+      'flex h-11 flex-none items-center justify-between bg-muted p-2 whitespace-nowrap',
+      isClosable && 'cursor-pointer',
       isTabsShown && 'pb-1'
     ]}
     onclick={handleHeaderClick}
@@ -95,8 +99,14 @@
     {/if}
   </div>
   {#if isOpen}
-    <div class="flex-grow overflow-x-auto" transition:slide={{ easing: quintOut }}>
-      {@render children()}
-    </div>
+    {#if fillHeight}
+      <div class="min-h-0 flex-1 overflow-hidden">
+        {@render children()}
+      </div>
+    {:else}
+      <div class="flex-grow overflow-x-auto" transition:slide={{ easing: quintOut }}>
+        {@render children()}
+      </div>
+    {/if}
   {/if}
 </div>

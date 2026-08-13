@@ -2,6 +2,7 @@ import type { State } from '$/types';
 import Hammer from 'hammerjs';
 import type { Point } from 'mermaid/dist/types.js';
 import panzoom from 'svg-pan-zoom';
+import { clampViewZoom, MAX_VIEW_ZOOM, MIN_VIEW_ZOOM } from './viewport';
 type PanZoom = typeof panzoom;
 
 export class PanZoomState {
@@ -10,6 +11,7 @@ export class PanZoomState {
   private zoom?: number;
   private pzoom: PanZoom | undefined;
   private isDirty = false;
+  private isApplyingViewport = false;
   private isInteractionSuspended = false;
   private resizeObserver: ResizeObserver;
 
@@ -39,6 +41,7 @@ export class PanZoomState {
         init: (options) => {
           const instance = options.instance;
           let initialScale = 1;
+          let panGestureAllowed: boolean | undefined;
           let pinchInitialized = false;
           let pannedX = 0;
           let pannedY = 0;
@@ -49,10 +52,13 @@ export class PanZoomState {
             pannedY = 0;
           };
           const handlePan = (event: HammerInput) => {
-            if (
-              this.isInteractionSuspended ||
-              this.shouldHandleCanvasGesture?.(event.target, event.pointers?.length ?? 1) === false
-            ) {
+            if (panGestureAllowed === undefined) {
+              panGestureAllowed =
+                !this.isInteractionSuspended &&
+                this.shouldHandleCanvasGesture?.(event.target, event.pointers?.length ?? 1) !==
+                  false;
+            }
+            if (!panGestureAllowed || this.isInteractionSuspended) {
               return;
             }
             instance.panBy({ x: event.deltaX - pannedX, y: event.deltaY - pannedY });
@@ -64,14 +70,20 @@ export class PanZoomState {
           hammer.on('panstart panmove', (event) => {
             if (event.type === 'panstart') {
               resetPanned();
+              panGestureAllowed = undefined;
             }
             handlePan(event);
+          });
+          hammer.on('panend pancancel', () => {
+            panGestureAllowed = undefined;
+            resetPanned();
           });
           hammer.on('pinchstart pinchmove', (event) => {
             if (this.isInteractionSuspended) return;
             if (event.type === 'pinchstart' || !pinchInitialized) {
               initialScale = instance.getZoom();
               pinchInitialized = true;
+              panGestureAllowed = undefined;
               resetPanned();
             }
             instance.zoomAtPoint(initialScale * event.scale, {
@@ -82,6 +94,7 @@ export class PanZoomState {
           });
           hammer.on('pinchend pinchcancel', () => {
             pinchInitialized = false;
+            panGestureAllowed = undefined;
             resetPanned();
           });
           preventTouchMove = (event: TouchEvent) => {
@@ -100,9 +113,10 @@ export class PanZoomState {
         }
       },
       fit: true,
-      maxZoom: 12,
-      minZoom: 0.05,
+      maxZoom: MAX_VIEW_ZOOM,
+      minZoom: MIN_VIEW_ZOOM,
       onPan: (pan) => {
+        if (this.isApplyingViewport) return;
         this.pan = pan;
         this.zoom = this.pzoom?.getZoom();
         this.isDirty = true;
@@ -111,6 +125,7 @@ export class PanZoomState {
         }
       },
       onZoom: (zoom) => {
+        if (this.isApplyingViewport) return;
         this.zoom = zoom;
         this.pan = this.pzoom?.getPan();
         this.isDirty = true;
@@ -146,8 +161,14 @@ export class PanZoomState {
       console.error('PanZoomState.restorePanZoom: pzoom is not initialized');
       return;
     }
-    this.pzoom.zoom(zoom);
-    this.pzoom.pan(pan);
+    this.isApplyingViewport = true;
+    try {
+      this.pzoom.zoom(clampViewZoom(zoom));
+      this.pzoom.pan(pan);
+      this.isDirty = true;
+    } finally {
+      this.isApplyingViewport = false;
+    }
   }
 
   public resize() {
@@ -178,6 +199,7 @@ export class PanZoomState {
       x: viewport.left + viewport.width / 2 - (target.left + target.width / 2),
       y: viewport.top + viewport.height / 2 - (target.top + target.height / 2)
     });
+    this.isDirty = true;
   }
 
   public suspendInteraction() {
@@ -197,23 +219,32 @@ export class PanZoomState {
     this.commitCurrentView();
   }
 
+  public fit() {
+    this.resetViewport();
+  }
+
   private resetViewport() {
     const pzoom = this.pzoom;
     if (!pzoom || !this.hasRenderableBounds()) {
       this.isDirty = false;
       return;
     }
-    pzoom.resize();
-    pzoom.fit();
-    pzoom.center();
-    const fittedZoom = pzoom.getZoom();
-    if (!Number.isFinite(fittedZoom) || fittedZoom <= 0) {
+    this.isApplyingViewport = true;
+    try {
+      pzoom.resize();
+      pzoom.fit();
+      pzoom.center();
+      const fittedZoom = pzoom.getZoom();
+      if (!Number.isFinite(fittedZoom) || fittedZoom <= 0) {
+        this.isDirty = false;
+        return;
+      }
+      pzoom.zoom(Math.max(fittedZoom * 0.92, MIN_VIEW_ZOOM));
+      pzoom.center();
       this.isDirty = false;
-      return;
+    } finally {
+      this.isApplyingViewport = false;
     }
-    pzoom.zoom(Math.max(fittedZoom * 0.92, 0.05));
-    pzoom.center();
-    this.isDirty = false;
   }
 
   private commitCurrentView() {
@@ -237,6 +268,7 @@ export class PanZoomState {
     this.pan = undefined;
     this.zoom = undefined;
     this.isDirty = false;
+    this.isApplyingViewport = false;
     this.isInteractionSuspended = false;
   }
 

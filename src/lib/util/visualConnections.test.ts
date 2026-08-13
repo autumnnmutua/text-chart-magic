@@ -7,6 +7,7 @@ import {
   findConnectionSnapCandidate,
   inferVisualConnectionAppearance,
   normalizeVisualConnections,
+  renderVisualConnections,
   reverseVisualConnection
 } from './visualConnections';
 
@@ -179,5 +180,32 @@ describe('visualConnections', () => {
       'connection-b': 0,
       'connection-c': 12
     });
+  });
+
+  it('renders the selected connection above other hit paths so its endpoint stays draggable', () => {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    const viewport = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    viewport.classList.add('svg-pan-zoom_viewport');
+    Object.defineProperty(viewport, 'getScreenCTM', { value: () => null });
+    svg.append(viewport);
+    const first = createVisualConnection({ x: 0, y: 0 }, { x: 100, y: 0 }, 'connection-first');
+    const second = createVisualConnection({ x: 0, y: 0 }, { x: 100, y: 0 }, 'connection-second');
+    first.label = '';
+    second.label = '';
+
+    renderVisualConnections(svg, { [first.id]: first, [second.id]: second }, [], {
+      selectedIds: new Set([first.id])
+    });
+
+    const rendered = [
+      ...viewport.querySelectorAll<SVGGElement>(
+        ':scope > g[data-visual-connection-layer] > g[data-visual-connection]'
+      )
+    ];
+    expect(rendered.map(({ dataset }) => dataset.visualId)).toEqual([
+      'connection-second',
+      'connection-first'
+    ]);
+    expect(rendered.at(-1)?.querySelector('[data-connection-endpoint="target"]')).not.toBeNull();
   });
 });

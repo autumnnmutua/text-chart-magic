@@ -9,6 +9,7 @@ import {
   injectHistoryIDs,
   removeEntry,
   restoreEntries,
+  saveManualEntry,
   setLoaderEntries,
   setMode,
   startAutoSave,
@@ -134,6 +135,15 @@ describe('addManualEntry', () => {
     expect(entry.name).toBeTruthy();
     expect(entry.type).toBe('manual');
   });
+
+  it('reports storage failure and does not expose an entry that was not persisted', () => {
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('quota exceeded', 'QuotaExceededError');
+    });
+    expect(saveManualEntry(codeState('graph TD\n A-->B'))).toBe('failed');
+    expect(entriesFor('manual')).toHaveLength(0);
+    setItem.mockRestore();
+  });
 });
 
 describe('addAutoEntry', () => {
@@ -206,6 +216,30 @@ describe('removeEntry / clearActive', () => {
     clearActive();
     expect(historyState.entries).toHaveLength(1);
   });
+
+  it('keeps a record visible when storage rejects its deletion', () => {
+    addManualEntry(codeState('graph TD\n A-->B'));
+    setMode('manual');
+    const target = historyState.entries[0].id;
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('quota exceeded', 'QuotaExceededError');
+    });
+    expect(removeEntry(target)).toBe(false);
+    expect(historyState.entries.map(({ id }) => id)).toEqual([target]);
+    setItem.mockRestore();
+  });
+
+  it('keeps all records visible when storage rejects clearing', () => {
+    addManualEntry(codeState('graph TD\n A-->B'));
+    setMode('manual');
+    const ids = historyState.entries.map(({ id }) => id);
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('quota exceeded', 'QuotaExceededError');
+    });
+    expect(clearActive()).toBe(false);
+    expect(historyState.entries.map(({ id }) => id)).toEqual(ids);
+    setItem.mockRestore();
+  });
 });
 
 describe('setLoaderEntries', () => {
@@ -253,7 +287,7 @@ describe('restoreEntries', () => {
       { id: 'same', name: 'first', state: defaultState, time: 10, type: 'manual' },
       { id: 'same', name: 'second', state: defaultState, time: 20, type: 'manual' }
     ]);
-    expect(result).toEqual({ restored: 1, invalid: 0, duplicates: 1 });
+    expect(result).toEqual({ restored: 1, invalid: 0, duplicates: 1, failed: 0 });
     expect(entriesFor('manual')).toHaveLength(1);
   });
 
@@ -271,7 +305,7 @@ describe('restoreEntries', () => {
       { id: 'loader', name: 'loader', state: defaultState, time: 1, type: 'loader' },
       { id: 'unknown', state: defaultState, time: 2, type: 'other' } as unknown as HistoryEntry
     ]);
-    expect(result).toEqual({ restored: 0, invalid: 2, duplicates: 0 });
+    expect(result).toEqual({ restored: 0, invalid: 2, duplicates: 0, failed: 0 });
   });
 
   it('assigns an id to a valid legacy entry that has none', () => {
@@ -298,6 +332,18 @@ describe('restoreEntries', () => {
     expect(result.restored).toBe(1);
     expect(result.invalid).toBe(0);
     expect(entriesFor('manual')).toHaveLength(1);
+  });
+
+  it('rolls back an import when browser storage rejects it', () => {
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('quota exceeded', 'QuotaExceededError');
+    });
+    const result = restoreEntries([
+      { id: 'm1', name: 'm', state: defaultState, time: 20, type: 'manual' }
+    ]);
+    expect(result).toEqual({ restored: 0, invalid: 0, duplicates: 0, failed: 1 });
+    expect(entriesFor('manual')).toHaveLength(0);
+    setItem.mockRestore();
   });
 });
 

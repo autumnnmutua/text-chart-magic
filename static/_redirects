@@ -1,0 +1,13 @@
+/index.html  /edit       301!
+
+# Preserve legacy share URLs such as /edit/#base64:... while serving the
+# prerendered page. The asset rewrites support relative SvelteKit URLs on
+# trailing-slash routes.
+/edit/       /edit.html  200!
+/edit/*      /:splat     200!
+/view/       /view.html  200!
+/view/*      /:splat     200!
+
+# This static build has no API routes. Add future function/proxy rules above
+# this SPA fallback.
+/*           /index.html 200

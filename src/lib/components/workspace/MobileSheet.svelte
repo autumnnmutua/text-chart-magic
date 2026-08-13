@@ -1,7 +1,7 @@
 <script lang="ts">
   import { beforeNavigate } from '$app/navigation';
   import { Button } from '$lib/components/ui/button';
-  import { mobileWorkspace } from '$lib/util/mobileWorkspace.svelte';
+  import { calculateMobileSheetStops, mobileWorkspace } from '$lib/util/mobileWorkspace.svelte';
   import { X } from 'lucide-svelte';
   import { onMount, type Snippet } from 'svelte';
 
@@ -30,12 +30,7 @@
 
   const heightStops = (): { collapsed: number; expanded: number } => {
     const viewportHeight = mobileWorkspace.visualHeight || window.innerHeight;
-    const maximum = Math.max(260, viewportHeight - 8);
-    const expandedHeight = Math.min(maximum, viewportHeight * 0.82);
-    return {
-      collapsed: Math.min(expandedHeight, Math.max(260, viewportHeight * 0.58)),
-      expanded: expandedHeight
-    };
+    return calculateMobileSheetStops(viewportHeight);
   };
 
   const snapSheet = (nextExpanded: boolean): void => {
@@ -126,7 +121,7 @@
   }}>
   <div
     bind:this={sheet}
-    class="absolute inset-x-0 bottom-0 flex min-h-44 flex-col overflow-hidden rounded-t-md border border-border-dark bg-card pb-[env(safe-area-inset-bottom)] shadow-2xl"
+    class="absolute inset-x-0 bottom-0 flex min-h-0 flex-col overflow-hidden rounded-t-md border border-border-dark bg-card pb-[env(safe-area-inset-bottom)] shadow-2xl"
     style:height={sheetHeight > 0 ? `${sheetHeight}px` : initiallyExpanded ? '82dvh' : '58dvh'}
     style="bottom: var(--mobile-keyboard-height, 0px); padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right);"
     aria-label={ariaLabel}

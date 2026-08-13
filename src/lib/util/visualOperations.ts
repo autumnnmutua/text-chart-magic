@@ -2,6 +2,8 @@ import type { VisualPosition } from '$/types';
 import { notify } from './notify';
 import {
   deleteDiagramElements,
+  deleteVisualElements,
+  inputState,
   updateVisualLayer,
   updateVisualLayers,
   updateVisualPositionsBatch,
@@ -153,7 +155,13 @@ export const nudgeSelected = (dx: number, dy: number): boolean => {
 };
 
 export const deleteSelectedElements = (): number => {
-  const items = selectedDocumentItems().filter((item) => item.canDelete && !isLocked(item.id));
+  const selected = selectedDocumentItems();
+  const selectedVisualElementIds = new Set(
+    selected
+      .filter((item) => Boolean(validatedState.current.visualElements?.[item.id]))
+      .map(({ id }) => id)
+  );
+  const items = selected.filter((item) => item.canDelete && !isLocked(item.id));
   if (items.length === 0) {
     notify('当前选择没有可删除的未锁定元素。');
     return 0;
@@ -161,17 +169,39 @@ export const deleteSelectedElements = (): number => {
   const connectionIds = items
     .filter((item) => Boolean(validatedState.current.visualConnections?.[item.id]))
     .map(({ id }) => id);
-  const diagramItems = items.filter((item) => !connectionIds.includes(item.id));
-  const deleted = deleteDiagramElements(
-    diagramItems.map((item) => ({
-      occurrence: item.occurrence,
-      sourceId: item.sourceId,
-      styleId: item.styleId ?? item.id,
-      text: item.kind === 'edge' && item.label === '连线' ? '箭头' : item.label
-    })),
-    connectionIds
+  const visualElementIds = items
+    .filter((item) => Boolean(validatedState.current.visualElements?.[item.id]))
+    .map(({ id }) => id);
+  const diagramItems = items.filter(
+    (item) => !connectionIds.includes(item.id) && !visualElementIds.includes(item.id)
   );
-  if (deleted > 0) clearVisualSelection();
+  const deletedVisualElements = deleteVisualElements(visualElementIds);
+  const deletedDiagramElements =
+    diagramItems.length > 0 || connectionIds.length > 0
+      ? deleteDiagramElements(
+          diagramItems.map((item) => ({
+            occurrence: item.occurrence,
+            sourceId: item.sourceId,
+            styleId: item.styleId ?? item.id,
+            text: item.kind === 'edge' && item.label === '连线' ? '箭头' : item.label
+          })),
+          connectionIds
+        )
+      : 0;
+  const deleted = deletedVisualElements + deletedDiagramElements;
+  if (deleted > 0) {
+    const skipped = selected.filter(
+      (item) =>
+        !items.some(({ id }) => id === item.id) &&
+        (!selectedVisualElementIds.has(item.id) || Boolean(inputState.visualElements?.[item.id]))
+    );
+    if (skipped.length > 0) {
+      setVisualSelection(skipped);
+      notify(`已删除可编辑元素，保留 ${skipped.length} 个锁定或固定结构元素。`);
+    } else {
+      clearVisualSelection();
+    }
+  }
   return deleted;
 };
 

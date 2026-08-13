@@ -1,10 +1,15 @@
-[build.environment]
-	MERMAID_ANALYTICS_URL = ''
-	MERMAID_DOCS_URL = 'https://mermaid.js.org'
-	MERMAID_DOMAIN = 'text-chart-magic.pages.dev'
+[build]
+  command = "pnpm build"
+  publish = "docs"
 
-[[redirects]]
-  from = "/index.html"
-  to = "/edit"
-  status = 301
-  force = true
+[build.environment]
+  NODE_VERSION = "24"
+  MERMAID_ANALYTICS_URL = ""
+  MERMAID_BASE_PATH = ""
+  MERMAID_DOCS_URL = "https://mermaid.js.org"
+  # Keep analytics host-neutral until a Netlify site and domain are deliberately selected.
+  MERMAID_DOMAIN = ""
+
+# Redirect and response-header rules live in static/_redirects and
+# static/_headers so both remote builds and prebuilt ZIP deploys use the same
+# production behavior.

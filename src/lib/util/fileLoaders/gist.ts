@@ -5,6 +5,7 @@ import { fetchJSON, fetchText } from '$lib/util/util';
 
 const codeFileName = 'code.mmd';
 const configFileName = 'config.json';
+const MAX_GIST_REVISIONS = 20;
 
 interface GithubFile {
   truncated: boolean;
@@ -98,7 +99,7 @@ export const loadGistData = async (gistURL: string): Promise<State> => {
     `https://api.github.com/gists/${gistID}${revisionID ? '/' + revisionID : ''}`
   );
   const gistHistory: GistData[] = [];
-  for (const entry of history) {
+  for (const entry of history.slice(0, MAX_GIST_REVISIONS)) {
     try {
       const data: GistData = await getGistData(entry.url);
       gistHistory.push(data);

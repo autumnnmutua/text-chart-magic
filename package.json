@@ -1,8 +1,18 @@
 {
-  "name": "mermaid-live-editor",
-  "version": "2.0.67",
+  "name": "text-chart-magic",
+  "version": "1.0.0",
+  "description": "面向桌面端和移动端的中文可视化图表编辑器，支持 Mermaid 源码与画布交互编辑。",
+  "private": true,
   "type": "module",
   "license": "MIT",
+  "homepage": "https://text-chart-magic.pages.dev/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/autumnnmutua/text-chart-magic.git"
+  },
+  "bugs": {
+    "url": "https://github.com/autumnnmutua/text-chart-magic/issues"
+  },
   "scripts": {
     "dev": "vite dev",
     "dev:force": "MERMAID_LOCAL=true pnpm dev --force",
@@ -15,7 +25,7 @@
     "lint:fix": "prettier --write --cache . && eslint --fix .",
     "format": "prettier --write --cache .",
     "pre-commit": "lint-staged",
-    "postinstall": "husky install && svelte-kit sync && (git config blame.ignoreRevsFile .git-blame-ignore-revs || true)",
+    "postinstall": "svelte-kit sync && node scripts/configure-git-hooks.mjs",
     "test:unit": "vitest",
     "test:unit:ui": "vitest --ui",
     "test:unit:coverage": "vitest run --coverage",
@@ -123,17 +133,7 @@
     ]
   },
   "engines": {
-    "node": ">=24.16.0"
+    "node": ">=24.0.0"
   },
-  "packageManager": "pnpm@10.34.4+sha512.8768be55200ae3f2226b6527fcca2687e14bc4e5f12d7721a0f25da3df47915177058648db4177baf348120fa0ba2752d8d8d93f6beaf1fe64ae18da8de961af",
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "deasync",
-      "esbuild",
-      "svelte-preprocess"
-    ],
-    "ignoredBuiltDependencies": [
-      "vue-demi"
-    ]
-  }
+  "packageManager": "pnpm@10.34.4"
 }

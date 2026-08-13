@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { EditorProps } from '$/types';
   import { env } from '$/util/env';
-  import { updateCodeStore, validatedState } from '$/util/state.svelte';
+  import { inputState, updateCodeStore, validatedState } from '$/util/state.svelte';
   import { editorFocus } from '$lib/util/editorFocus.svelte';
   import { initEditor, installMonacoCancellationGuard } from '$lib/util/monacoExtra';
   import { findVisualTextRange } from '$lib/util/visualTextEdit';
@@ -29,6 +29,7 @@
   let isUpdatingFromState = false;
   let hasHydratedEditor = false;
   let handledFocusRequestID = 0;
+  let layoutFrame = 0;
 
   const applyEditorTheme = (currentMode: typeof mode.current) => {
     if (!editor) return;
@@ -50,6 +51,68 @@
     'mermaid',
     monaco.Uri.parse('internal://mermaid.mmd')
   );
+
+  const scheduleEditorLayout = (): void => {
+    if (!editor || !divElement) return;
+    if (layoutFrame) cancelAnimationFrame(layoutFrame);
+    layoutFrame = requestAnimationFrame(() => {
+      layoutFrame = 0;
+      if (!editor || !divElement) return;
+      const { height, width } = divElement.getBoundingClientRect();
+      if (height <= 0 || width <= 0) return;
+      editor.layout({ height, width });
+    });
+  };
+
+  const syncEditorFromState = (
+    state: typeof inputState,
+    errorMarkers: typeof validatedState.current.errorMarkers
+  ): void => {
+    if (!editor) return;
+    const { editorMode, code, mermaid } = state;
+    const model = editorMode === 'code' ? mermaidModel : jsonModel;
+
+    if (editor.getModel()?.id !== model.id) {
+      editor.setModel(model);
+      currentText = model.getValue();
+    }
+
+    const newText = editorMode === 'code' ? code : mermaid;
+    if (newText !== currentText) {
+      isUpdatingFromState = true;
+      try {
+        editor.setScrollTop(0);
+        editor.pushUndoStop();
+        editor.executeEdits('updateCode', [
+          {
+            range: model.getFullModelRange(),
+            text: newText
+          }
+        ]);
+        editor.pushUndoStop();
+        currentText = newText;
+      } finally {
+        queueMicrotask(() => {
+          isUpdatingFromState = false;
+          hasHydratedEditor = true;
+        });
+      }
+    } else {
+      hasHydratedEditor = true;
+    }
+
+    monaco.editor.setModelMarkers(model, 'mermaid', errorMarkers);
+    scheduleEditorLayout();
+  };
+
+  const currentErrorMarkers = (): typeof validatedState.current.errorMarkers => {
+    const validated = validatedState.current;
+    const validationMatchesInput =
+      inputState.editorMode === 'code'
+        ? validated.code === inputState.code
+        : validated.mermaid === inputState.mermaid;
+    return validationMatchesInput ? validated.errorMarkers : [];
+  };
 
   const toMonacoRange = ({ end, start }: { end: number; start: number }) => {
     const startPosition = mermaidModel.getPositionAt(start);
@@ -144,20 +207,24 @@
     });
 
     applyEditorTheme(mode.current);
+    syncEditorFromState(inputState, currentErrorMarkers());
 
-    const resizeObserver = new ResizeObserver((entries) => {
-      editor?.layout({
-        height: entries[0].contentRect.height,
-        width: entries[0].contentRect.width
-      });
-    });
+    const resizeObserver = new ResizeObserver(scheduleEditorLayout);
+    const visualViewport = window.visualViewport;
 
-    if (divElement.parentElement) {
-      resizeObserver.observe(divElement);
-    }
+    resizeObserver.observe(divElement);
+    if (divElement.parentElement) resizeObserver.observe(divElement.parentElement);
+    window.addEventListener('resize', scheduleEditorLayout);
+    window.addEventListener('orientationchange', scheduleEditorLayout);
+    visualViewport?.addEventListener('resize', scheduleEditorLayout);
+    scheduleEditorLayout();
 
     return () => {
       resizeObserver.disconnect();
+      window.removeEventListener('resize', scheduleEditorLayout);
+      window.removeEventListener('orientationchange', scheduleEditorLayout);
+      visualViewport?.removeEventListener('resize', scheduleEditorLayout);
+      if (layoutFrame) cancelAnimationFrame(layoutFrame);
       editor?.dispose();
       editor = undefined;
       jsonModel.dispose();
@@ -175,48 +242,18 @@
   });
 
   $effect(() => {
-    const { errorMarkers, editorMode, code, mermaid } = validatedState.current;
-    if (!editor) {
-      return;
-    }
-
-    const model = editorMode === 'code' ? mermaidModel : jsonModel;
-
-    if (editor.getModel()?.id !== model.id) {
-      editor.setModel(model);
-      currentText = model.getValue();
-    }
-
-    // Update editor text if it's different
-    const newText = editorMode === 'code' ? code : mermaid;
-    if (newText !== currentText) {
-      isUpdatingFromState = true;
-      try {
-        editor.setScrollTop(0);
-        editor.pushUndoStop();
-        editor.executeEdits('updateCode', [
-          {
-            range: model.getFullModelRange(),
-            text: newText
-          }
-        ]);
-        editor.pushUndoStop();
-        currentText = newText;
-      } finally {
-        queueMicrotask(() => {
-          isUpdatingFromState = false;
-          hasHydratedEditor = true;
-        });
-      }
-    } else {
-      hasHydratedEditor = true;
-    }
-
-    // Display/clear errors
-    monaco.editor.setModelMarkers(model, 'mermaid', errorMarkers);
+    // The editable text follows the synchronous input state. Validation may finish
+    // later, so only markers come from validatedState; this prevents older parse
+    // results from overwriting characters typed in the meantime.
+    syncEditorFromState(inputState, currentErrorMarkers());
   });
 </script>
 
-<div class="relative h-full grow overflow-hidden">
-  <div bind:this={divElement} id="editor" class="h-full w-full"></div>
+<div class="relative h-full min-h-0 grow overflow-hidden">
+  <div
+    bind:this={divElement}
+    id="editor"
+    class="h-full min-h-0 w-full"
+    data-testid="desktop-code-editor">
+  </div>
 </div>

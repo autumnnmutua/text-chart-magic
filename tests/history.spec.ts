@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { randomBytes } from 'node:crypto';
 
 const config = '{\n  "theme": "default"\n}';
 
@@ -86,9 +87,26 @@ test.describe('History', () => {
     await expect(page.locator('#view')).toContainText('Halloween');
   });
 
+  test('keeps an oversized local version usable when it cannot fit in a share link', async ({
+    page
+  }) => {
+    const oversized = entry('m-3', 'large-workspace', 'manual', 'Large');
+    oversized.state.code = `flowchart TD\n  A[Large]\n  %%${randomBytes(900_000).toString('base64')}`;
+    await page.evaluate(
+      (manual) => localStorage.setItem('manualHistoryStore', manual),
+      JSON.stringify([oversized])
+    );
+    await page.reload();
+    await openHistory(page);
+
+    await expect(page.locator('#historyList')).toContainText('large-workspace');
+    await expect(page.getByTitle('这个版本较大，请导出作品备份后在其他设备打开')).toBeDisabled();
+    await expect(page.getByRole('button', { name: '恢复这个版本' })).toBeEnabled();
+  });
+
   test('keeps the active tab highlighted when switching modes', async ({ page }) => {
     await openHistory(page);
-    const saved = page.getByRole('tab', { name: '已保存' });
+    const saved = page.getByRole('tab', { name: '本机版本' });
     const timeline = page.getByRole('tab', { name: '时间线' });
 
     await expect(saved).toHaveClass(/border-b-2/);
@@ -108,7 +126,7 @@ test.describe('History', () => {
 
     // Saving again without changes does not add a duplicate and notifies the user.
     await page.locator('#saveHistory').click();
-    await expect(page.getByText('当前图表已经保存过了。')).toBeVisible();
+    await expect(page.getByText('当前内容已存在于本机版本中。')).toBeVisible();
     await expect(page.locator('#historyList li')).toHaveCount(1);
 
     // Loading a different sample changes the state, so it saves as a new entry.
@@ -136,12 +154,12 @@ test.describe('History', () => {
     await page.locator('#saveHistory').click();
     await expect(page.locator('#historyList li')).toHaveCount(2);
 
+    page.on('dialog', (dialog) => dialog.accept());
     await page.getByRole('button', { name: '删除这个版本' }).first().click();
     await expect(page.locator('#historyList li')).toHaveCount(1);
 
-    page.on('dialog', (dialog) => dialog.accept());
     await page.locator('#clearHistory').click();
     await expect(page.locator('#historyList li')).toHaveCount(0);
-    await expect(page.locator('#historyList')).toContainText('还没有保存的版本。');
+    await expect(page.locator('#historyList')).toContainText('还没有本机版本。');
   });
 });

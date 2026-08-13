@@ -1,5 +1,5 @@
 import { expect, test, type BrowserContext, type Page } from '@playwright/test';
-import { setEditorCode } from './utils';
+import { setEditorCode, TEST_BASE_URL } from './utils';
 
 const waitForDiagram = async (page: Page): Promise<void> => {
   await page.waitForSelector('#view svg');
@@ -73,10 +73,17 @@ test.describe('统一工作区能力', () => {
     await page.locator('#view').click({ force: true, position: { x: 420, y: 560 } });
     await page.keyboard.press('Control+Z');
     await expect(page.locator('#view')).toContainText('输入中文想法');
-    await page.getByRole('button', { name: '关闭搜索' }).click();
+    await page.getByRole('button', { name: '查看和编辑代码' }).click();
+    await expect(searchPanel).toHaveCount(0);
+    await expect(page.getByTestId('code-workbench')).toBeVisible();
+    await page.getByRole('button', { name: '关闭代码工作台' }).click();
     await expect(page.locator('#view .visual-search-current')).toHaveCount(0);
 
-    await page.getByRole('button', { name: '命令与快捷键' }).click();
+    const commandButton = page.getByRole('button', { name: '命令与快捷键' });
+    await commandButton.click();
+    await page.keyboard.press('Escape');
+    await expect(commandButton).toBeFocused();
+    await commandButton.click();
     const palette = page.getByRole('dialog', { name: '命令面板' });
     await expect(palette).toBeVisible();
     await palette.getByLabel('搜索命令').fill('图层与大纲');
@@ -89,6 +96,9 @@ test.describe('统一工作区能力', () => {
     await expect(layerLabel).toBeVisible();
     const row = layerLabel.locator('xpath=ancestor::div[contains(@class,"group")][1]');
     await row.hover();
+    await row.getByRole('button', { name: '重命名' }).click();
+    await expect(layers.getByLabel('重命名元素')).toBeFocused();
+    await layers.getByLabel('重命名元素').press('Escape');
     await row.getByRole('button', { name: '锁定' }).click();
     await expect(row.getByRole('button', { name: '解锁' })).toBeVisible();
 
@@ -184,8 +194,9 @@ test.describe('统一工作区能力', () => {
     await connection.locator('[data-connection-hit]').click({ force: true });
     const toolbar = page.getByTestId('connection-toolbar');
     await expect(toolbar).toBeVisible();
-    await toolbar.getByLabel('箭头文字').fill('异步调用');
+    await toolbar.getByLabel('箭头文字').fill('异步调用   ');
     await toolbar.getByLabel('箭头文字').press('Enter');
+    await expect(toolbar.getByLabel('箭头文字')).toHaveValue('异步调用');
     await expect(connection).toContainText('异步调用');
     await toolbar.getByRole('button', { name: '双向箭头' }).click();
     await expect(connection.locator('[data-connection-path]')).toHaveAttribute(
@@ -264,6 +275,10 @@ test.describe('统一工作区能力', () => {
     await expect(workbench).toBeVisible();
 
     const validCode = await editor.inputValue();
+    await editor.press('Control+f');
+    await expect(page.getByTestId('global-search-panel')).toHaveCount(0);
+    await editor.press('Control+k');
+    await expect(page.getByRole('dialog', { name: '命令面板' })).toHaveCount(0);
     const invalidCode = `${validCode}\n  broken[`;
     await editor.fill(invalidCode);
     await workbench.getByRole('button', { name: '应用修改' }).click();
@@ -525,9 +540,137 @@ test.describe('统一工作区能力', () => {
     );
   });
 
+  test('XY 图纵坐标系列可增删改排序并在手机横竖屏保持可用', async ({ browser, page }) => {
+    test.setTimeout(90_000);
+    const code = [
+      'xychart-beta',
+      '  title "季度订单"',
+      '  x-axis "月份（单位：月）" ["一月", "二月", "三月"]',
+      '  y-axis "订单数（单位：单）" 0 --> 100',
+      '  bar "实际" [20, 30, 40]',
+      '  line "计划" [25, 35, 45]'
+    ].join('\n');
+
+    await page.goto('/');
+    await waitForDiagram(page);
+    await setEditorCode(page, code);
+    await page.getByRole('button', { name: '图层与大纲' }).click();
+
+    let editor = page.getByTestId('xy-series-editor');
+    await expect(editor).toBeVisible();
+    await editor.getByRole('button', { name: '添加折线纵坐标系列' }).click();
+    await editor.getByLabel('纵坐标系列 3 名称').fill('退款');
+    await editor.getByLabel('纵坐标系列 3 名称').press('Enter');
+    await expect
+      .poll(async () => String((await storedState(page)).code ?? ''))
+      .toContain('line "退款" [0, 0, 0]');
+    await editor.getByLabel('纵坐标系列 3 横坐标 1 数值').fill('3');
+    await editor.getByLabel('纵坐标系列 3 横坐标 1 数值').press('Enter');
+    await editor.getByLabel('纵坐标系列 3 横坐标 2 数值').fill('5');
+    await editor.getByLabel('纵坐标系列 3 横坐标 2 数值').press('Enter');
+    await editor.getByLabel('纵坐标系列 3 横坐标 3 数值').fill('4');
+    await editor.getByLabel('纵坐标系列 3 横坐标 3 数值').press('Enter');
+    await editor.getByLabel('横坐标轴名称').fill('结算月份');
+    await editor.getByLabel('横坐标轴名称').press('Enter');
+    await editor.getByLabel('横坐标单位').fill('月');
+    await editor.getByLabel('横坐标单位').press('Enter');
+    await editor.getByLabel('纵坐标轴名称').fill('订单量');
+    await editor.getByLabel('纵坐标轴名称').press('Enter');
+    await editor.getByLabel('纵坐标单位').fill('笔');
+    await editor.getByLabel('纵坐标单位').press('Enter');
+    await editor.getByRole('button', { name: '添加横坐标' }).click();
+    await editor.getByLabel('横坐标 4 名称').fill('四月');
+    await editor.getByLabel('横坐标 4 名称').press('Enter');
+    await editor.getByLabel('纵坐标系列 3 横坐标 4 数值').fill('8');
+    await editor.getByLabel('纵坐标系列 3 横坐标 4 数值').press('Enter');
+    await editor.getByRole('button', { name: '删除横坐标 2' }).click();
+    await editor.getByRole('button', { name: '上移纵坐标系列 3' }).click();
+    await editor.getByRole('button', { name: '删除纵坐标系列 3' }).click();
+
+    await expect
+      .poll(async () => String((await storedState(page)).code ?? ''))
+      .toContain('line "退款" [3, 4, 8]');
+    await expect
+      .poll(async () => String((await storedState(page)).code ?? ''))
+      .toContain('x-axis "结算月份（单位：月）" ["一月", "三月", "四月"]');
+    await expect
+      .poll(async () => String((await storedState(page)).code ?? ''))
+      .toContain('y-axis "订单量（单位：笔）" 0 --> 100');
+    await expect
+      .poll(async () => String((await storedState(page)).code ?? ''))
+      .not.toContain('line "计划"');
+    await page.getByRole('button', { name: '撤回', exact: true }).click();
+    await expect
+      .poll(async () => String((await storedState(page)).code ?? ''))
+      .toContain('line "计划"');
+    await page.getByRole('button', { name: '恢复', exact: true }).click();
+    await expect
+      .poll(async () => String((await storedState(page)).code ?? ''))
+      .not.toContain('line "计划"');
+    await page.reload();
+    await waitForDiagram(page);
+    await page.getByRole('button', { name: '图层与大纲' }).click();
+    editor = page.getByTestId('xy-series-editor');
+    await expect(editor.getByLabel('纵坐标轴名称')).toHaveValue('订单量');
+    await expect(editor.getByLabel('纵坐标单位')).toHaveValue('笔');
+    await expect(editor.getByLabel('横坐标轴名称')).toHaveValue('结算月份');
+    await expect(editor.getByLabel('纵坐标系列 2 名称')).toHaveValue('退款');
+
+    const context = await browser.newContext({
+      baseURL: TEST_BASE_URL,
+      hasTouch: true,
+      isMobile: true,
+      viewport: { height: 844, width: 390 }
+    });
+    const mobilePage = await context.newPage();
+    try {
+      await mobilePage.goto('/');
+      await waitForDiagram(mobilePage);
+      const viewSwitch = mobilePage.getByRole('switch');
+      if (await viewSwitch.isChecked()) await viewSwitch.click();
+      await setEditorCode(mobilePage, code);
+      if (!(await viewSwitch.isChecked())) await viewSwitch.click();
+      await waitForDiagram(mobilePage);
+
+      const mobileToolbar = mobilePage.getByTestId('mobile-edit-toolbar');
+      await mobileToolbar.getByRole('button', { name: '更多' }).click();
+      await mobilePage.getByRole('button', { name: '图层', exact: true }).click();
+      const mobileEditor = mobilePage.getByTestId('xy-series-editor');
+      await expect(mobileEditor).toBeVisible();
+      await mobileEditor.getByRole('button', { name: '添加柱状纵坐标系列' }).tap();
+      await mobileEditor.getByLabel('纵坐标系列 3 名称').fill('移动端新增');
+      await mobileEditor.getByLabel('纵坐标系列 3 名称').press('Enter');
+      await expect
+        .poll(async () => String((await storedState(mobilePage)).code ?? ''))
+        .toContain('bar "移动端新增" [0, 0, 0]');
+      await mobileEditor.getByLabel('纵坐标系列 3 横坐标 1 数值').fill('12');
+      await mobileEditor.getByLabel('纵坐标系列 3 横坐标 1 数值').press('Enter');
+      await mobileEditor.getByLabel('纵坐标单位').fill('单');
+      await mobileEditor.getByLabel('纵坐标单位').press('Enter');
+      await expect
+        .poll(async () => String((await storedState(mobilePage)).code ?? ''))
+        .toContain('bar "移动端新增" [12, 0, 0]');
+      expect(
+        await mobilePage.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)
+      ).toBe(true);
+
+      await mobilePage.setViewportSize({ height: 390, width: 844 });
+      await expect(mobileEditor).toBeVisible();
+      expect(
+        await mobilePage.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)
+      ).toBe(true);
+      await mobileEditor.getByRole('button', { name: '删除纵坐标系列 3' }).tap();
+      await expect
+        .poll(async () => String((await storedState(mobilePage)).code ?? ''))
+        .not.toContain('移动端新增');
+    } finally {
+      await context.close();
+    }
+  });
+
   test('手机专用模式支持直接编辑文字、搜索、图层和横竖屏切换', async ({ browser }) => {
     const context = await browser.newContext({
-      baseURL: 'http://localhost:3000',
+      baseURL: TEST_BASE_URL,
       hasTouch: true,
       isMobile: true,
       viewport: { height: 844, width: 390 }

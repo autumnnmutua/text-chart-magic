@@ -18,6 +18,8 @@
   import { deleteSelectedElements, selectVisualDocumentItem } from '$lib/util/visualOperations';
   import { findVisualTextRange } from '$lib/util/visualTextEdit';
   import { closeWorkspacePanel } from '$lib/util/workspacePanels.svelte';
+  import { getDiagramKeyword } from '$lib/util/diagramBranch';
+  import XYSeriesEditor from './XYSeriesEditor.svelte';
   import {
     Box,
     ChevronDown,
@@ -41,6 +43,7 @@
   let collapsedIds = $state<string[]>([]);
   let editingId = $state('');
   let draft = $state('');
+  let renameInput = $state<HTMLInputElement | null>(null);
 
   const normalizedFilter = $derived(filter.trim().toLocaleLowerCase());
   const filteredItems = $derived(
@@ -76,6 +79,10 @@
     }
     editingId = item.id;
     draft = item.label;
+    requestAnimationFrame(() => {
+      renameInput?.focus();
+      renameInput?.select();
+    });
   };
 
   const finishRename = (item: VisualDocumentItem): void => {
@@ -127,6 +134,10 @@
         <X class="size-4" />
       </Button>
     </header>
+  {/if}
+
+  {#if getDiagramKeyword(validatedState.current.code) === 'xychart-beta'}
+    <XYSeriesEditor />
   {/if}
 
   <div class="border-b p-2">
@@ -185,6 +196,7 @@
           {/if}
           {#if editingId === item.id}
             <Input
+              bind:ref={renameInput}
               bind:value={draft}
               class="h-8 min-w-0"
               aria-label="重命名元素"
@@ -230,7 +242,7 @@
             title={layer.locked ? '解锁' : '锁定'}
             aria-label={layer.locked ? '解锁' : '锁定'}
             onclick={() => updateVisualLayer([item.id], { locked: !layer.locked })}>
-            {#if layer.locked}<Lock class="size-3.5" />{:else}<LockOpen class="size-3.5" />{/if}
+            {#if layer.locked}<LockOpen class="size-3.5" />{:else}<Lock class="size-3.5" />{/if}
           </Button>
           {#if item.canDelete}
             <Button

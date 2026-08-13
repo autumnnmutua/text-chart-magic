@@ -6,7 +6,15 @@ test.describe('Error display tests', () => {
     await editPage.clearEditor();
     await editPage.typeInEditor('graph TD\nA --> B -->');
 
-    await editPage.checkInEditor('A --> B -->');
+    await editPage.page.waitForTimeout(1_400);
+    await expect
+      .poll(() =>
+        editPage.page.evaluate(() => {
+          const state = JSON.parse(localStorage.getItem('codeStore') ?? '{}') as { code?: string };
+          return state.code;
+        })
+      )
+      .toContain('A --> B -->');
     await editPage.checkTextInView('输入中文想法');
     await expect(editPage.page.getByTestId('error-container')).toHaveCount(0);
   });

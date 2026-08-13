@@ -4,6 +4,7 @@ let shouldSync = true;
 let updater: () => void = () => undefined;
 let renderPromise: Promise<void> | undefined;
 let resolveRenderPromise: (() => void) | undefined;
+let renderedStateKey = '';
 const renderDelay = 1000;
 const slowRenderThreshold = 150;
 
@@ -41,3 +42,9 @@ export const shouldRefreshView = (): boolean => {
 export const waitForRender = (): Promise<void> => {
   return renderPromise ?? Promise.resolve();
 };
+
+export const markRenderedState = (stateKey: string): void => {
+  renderedStateKey = stateKey;
+};
+
+export const getRenderedStateKey = (): string => renderedStateKey;

@@ -34,17 +34,20 @@ export const readJSON = <T>(key: string, fallback: T): T => {
   }
 };
 
-export const writeJSON = (key: string, value: unknown): void => {
+export const writeJSON = (key: string, value: unknown): boolean => {
   const storage = getStorage();
-  if (!storage) return;
+  if (!storage) return false;
   try {
     storage.setItem(key, JSON.stringify(value));
+    return true;
   } catch {
     // Keep the in-memory editor usable when storage is blocked or full.
+    return false;
   }
 };
 
 export interface Persisted<T> {
+  readonly lastWriteSucceeded: boolean;
   value: T;
 }
 
@@ -53,13 +56,17 @@ export interface Persisted<T> {
 // in-place mutation would update the UI without ever being persisted.
 export const persisted = <T>(key: string, initial: T): Persisted<T> => {
   let value = $state.raw<T>(readJSON(key, initial));
+  let lastWriteSucceeded = true;
   return {
+    get lastWriteSucceeded() {
+      return lastWriteSucceeded;
+    },
     get value() {
       return value;
     },
     set value(next: T) {
       value = next;
-      writeJSON(key, next);
+      lastWriteSucceeded = writeJSON(key, next);
     }
   };
 };

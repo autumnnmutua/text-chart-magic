@@ -4,11 +4,13 @@ import {
   type Browser,
   type BrowserContext,
   type CDPSession,
+  type Locator,
   type Page
 } from '@playwright/test';
 import { localizedDiagramSamples } from '../src/lib/util/diagramSamples';
+import { diagramOrder } from '../src/lib/util/diagramCatalog';
 import { serializeState } from '../src/lib/util/serde';
-import { setEditorCode } from './utils';
+import { setEditorCode, TEST_BASE_URL } from './utils';
 
 const waitForDiagram = async (page: Page, minimumNodes = 1): Promise<void> => {
   await page.waitForFunction(
@@ -25,7 +27,7 @@ const createMobilePage = async (
   viewport: { height: number; width: number }
 ): Promise<{ context: BrowserContext; page: Page }> => {
   const context = await browser.newContext({
-    baseURL: 'http://localhost:3000',
+    baseURL: TEST_BASE_URL,
     hasTouch: true,
     isMobile: true,
     viewport
@@ -68,6 +70,20 @@ const dispatchTouchDrag = async (
   }
   await beforeEnd?.();
   await session.send('Input.dispatchTouchEvent', { touchPoints: [], type: 'touchEnd' });
+};
+
+const dispatchTouchTap = async (session: CDPSession, target: Locator): Promise<void> => {
+  const point = await target.evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    return { x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 };
+  });
+  await session.send('Input.dispatchTouchEvent', {
+    touchPoints: [{ x: Math.round(point.x), y: Math.round(point.y) }],
+    type: 'touchStart'
+  });
+  await new Promise((resolve) => setTimeout(resolve, 32));
+  await session.send('Input.dispatchTouchEvent', { touchPoints: [], type: 'touchEnd' });
+  await new Promise((resolve) => setTimeout(resolve, 80));
 };
 
 const pinchCanvasIn = async (page: Page, session: CDPSession): Promise<void> => {
@@ -227,6 +243,73 @@ test.describe('手机专用编辑模式', () => {
     }
   });
 
+  test('移动端主工具栏保存完整作品，重复点击去重并可在刷新后恢复', async ({ browser }) => {
+    test.setTimeout(60_000);
+    const { context, page } = await createMobilePage(browser, { height: 844, width: 390 });
+    try {
+      await setMobileDiagram(page, 'flowchart LR\n  SAVE[移动端保存] --> DONE[完整恢复]');
+      const toolbar = page.getByTestId('mobile-edit-toolbar');
+      const saveButton = toolbar.getByRole('button', { name: '保存本机版本', exact: true });
+      await expect(saveButton).toBeVisible();
+      await saveButton.tap();
+      await expect(toolbar).toContainText('已存本机');
+      await expect
+        .poll(() =>
+          page.evaluate(() => {
+            const entries = JSON.parse(localStorage.getItem('manualHistoryStore') ?? '[]') as {
+              state?: { code?: string };
+            }[];
+            return { code: entries[0]?.state?.code, count: entries.length };
+          })
+        )
+        .toEqual({ code: 'flowchart LR\n  SAVE[移动端保存] --> DONE[完整恢复]', count: 1 });
+
+      await saveButton.tap();
+      await expect
+        .poll(() =>
+          page.evaluate(() => JSON.parse(localStorage.getItem('manualHistoryStore') ?? '[]').length)
+        )
+        .toBe(1);
+      await page.reload();
+      await waitForDiagram(page);
+      await expect(page.locator('#view')).toContainText('移动端保存');
+
+      await page.setViewportSize({ height: 390, width: 844 });
+      await expect(saveButton).toBeVisible();
+    } finally {
+      await context.close();
+    }
+  });
+
+  test('移动端保存被浏览器存储策略拒绝时保留编辑并明确报错', async ({ browser }) => {
+    const { context, page } = await createMobilePage(browser, { height: 844, width: 390 });
+    try {
+      await setMobileDiagram(page, 'flowchart TD\n  A[尚未保存] --> B[继续编辑]');
+      await page.evaluate(() => {
+        const nativeSetItem = Storage.prototype.setItem;
+        Storage.prototype.setItem = function (key: string, value: string): void {
+          if (key === 'manualHistoryStore') {
+            throw new DOMException('quota exceeded', 'QuotaExceededError');
+          }
+          nativeSetItem.call(this, key, value);
+        };
+      });
+      await page
+        .getByTestId('mobile-edit-toolbar')
+        .getByRole('button', { name: '保存本机版本', exact: true })
+        .tap();
+      await expect(page.getByText(/保存失败：浏览器存储空间不足或已被禁用/)).toBeVisible();
+      await expect(page.locator('#view')).toContainText('尚未保存');
+      expect(
+        await page.evaluate(
+          () => JSON.parse(localStorage.getItem('manualHistoryStore') ?? '[]').length
+        )
+      ).toBe(0);
+    } finally {
+      await context.close();
+    }
+  });
+
   test('全部中文初始图在手机画布中均可渲染且不会撑破页面', async ({ browser }) => {
     test.setTimeout(180_000);
     const { context, page } = await createMobilePage(browser, { height: 844, width: 390 });
@@ -258,6 +341,7 @@ test.describe('手机专用编辑模式', () => {
     test.setTimeout(60_000);
     const { context, page } = await createMobilePage(browser, { height: 844, width: 390 });
     try {
+      const session = await context.newCDPSession(page);
       await setMobileDiagram(
         page,
         ['block-beta', 'columns 3', 'A["入口"]', 'B["处理"]', 'C["结果"]'].join('\n')
@@ -266,7 +350,9 @@ test.describe('手机专用编辑模式', () => {
       const nodeA = page.locator('#view g.node[data-style-id="A"]');
       const nodeB = page.locator('#view g.node[data-style-id="B"]');
       const nodeC = page.locator('#view g.node[data-style-id="C"]');
-      await toolbar.getByRole('button', { name: '箭头', exact: true }).tap();
+      const arrowButton = toolbar.getByRole('button', { name: '箭头', exact: true });
+      await arrowButton.tap();
+      await expect(arrowButton).toHaveAttribute('aria-pressed', 'true');
       await nodeA.tap({ force: true });
       await nodeB.tap({ force: true });
       const connection = page.locator('#view [data-visual-connection]').first();
@@ -278,7 +364,6 @@ test.describe('手机专用编辑模式', () => {
       const nodeCBounds = await nodeC.boundingBox();
       expect(endpointBounds).toBeTruthy();
       expect(nodeCBounds).toBeTruthy();
-      const session = await context.newCDPSession(page);
       if (endpointBounds && nodeCBounds) {
         await dispatchTouchDrag(
           session,
@@ -474,6 +559,144 @@ test.describe('手机专用编辑模式', () => {
         expect(renderMs).toBeLessThan(30_000);
         expect(dragMs).toBeLessThan(5_000);
       }
+    } finally {
+      await context.close();
+    }
+  });
+
+  test('移动端新增分支后立即定位，可编辑、继续扩展并适配横竖屏', async ({ browser }) => {
+    test.setTimeout(60_000);
+    const { context, page } = await createMobilePage(browser, { height: 844, width: 390 });
+    try {
+      const session = await context.newCDPSession(page);
+      await setMobileDiagram(
+        page,
+        ['flowchart LR', '  ROOT[产品目标]', '  ROOT --> PLAN[执行方案]'].join('\n')
+      );
+      const toolbar = page.getByTestId('mobile-edit-toolbar');
+      const root = page.locator('#view g.node').filter({ hasText: '产品目标' });
+      await dispatchTouchTap(session, root);
+      const addBranchButton = toolbar.getByRole('button', { name: '分支', exact: true }).last();
+      await expect(addBranchButton).toBeEnabled();
+      await addBranchButton.tap();
+
+      const branch = page.locator('#view g.node').filter({ hasText: '新分支' });
+      await expect(branch).toBeVisible();
+      await expect
+        .poll(() =>
+          branch.evaluate((element) => {
+            const item = element.getBoundingClientRect();
+            const view = document.querySelector('#view')?.getBoundingClientRect();
+            return Boolean(
+              view &&
+              item.left >= view.left + 8 &&
+              item.right <= view.right - 8 &&
+              item.top >= view.top + 40 &&
+              item.bottom <= view.bottom - 110
+            );
+          })
+        )
+        .toBe(true);
+
+      await dispatchTouchTap(session, branch);
+      await toolbar.getByRole('button', { name: '文字', exact: true }).tap();
+      await page.getByLabel('图中文字编辑').fill('移动端新分支');
+      await page
+        .getByTestId('mobile-text-editor')
+        .getByRole('button', { name: '完成', exact: true })
+        .tap();
+      await expect(page.locator('#view')).toContainText('移动端新分支');
+
+      await dispatchTouchTap(
+        session,
+        page.locator('#view g.node').filter({ hasText: '移动端新分支' })
+      );
+      await expect(addBranchButton).toBeEnabled();
+      await addBranchButton.tap();
+      const child = page.locator('#view g.node[data-style-id*="ROOT_branch_1_branch_1"]');
+      await expect(child).toBeVisible();
+      await expect
+        .poll(() =>
+          page.evaluate(() => {
+            const code = (
+              JSON.parse(localStorage.getItem('codeStore') ?? '{}') as { code?: string }
+            ).code;
+            return code ?? '';
+          })
+        )
+        .toContain('ROOT_branch_1_branch_1');
+
+      await page.setViewportSize({ height: 390, width: 844 });
+      await page.waitForTimeout(300);
+      await expect(page.locator('#view svg')).toBeVisible();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+        845
+      );
+      const layout = await page.locator('#view g.node').evaluateAll((elements) => {
+        const view = document.querySelector('#view')?.getBoundingClientRect();
+        const bounds = elements.map((element) => element.getBoundingClientRect());
+        const inside = bounds.every(
+          (item) =>
+            view &&
+            item.left >= view.left - 1 &&
+            item.right <= view.right + 1 &&
+            item.top >= view.top - 1 &&
+            item.bottom <= view.bottom + 1
+        );
+        const overlap = bounds.some((item, index) =>
+          bounds
+            .slice(index + 1)
+            .some(
+              (other) =>
+                Math.min(item.right, other.right) - Math.max(item.left, other.left) > 2 &&
+                Math.min(item.bottom, other.bottom) - Math.max(item.top, other.top) > 2
+            )
+        );
+        return { inside, overlap };
+      });
+      expect(layout).toEqual({ inside: true, overlap: false });
+    } finally {
+      await context.close();
+    }
+  });
+
+  test('移动端以其他图表替代命令入口，并复用完整真实图表目录', async ({ browser }) => {
+    test.setTimeout(60_000);
+    const { context, page } = await createMobilePage(browser, { height: 844, width: 390 });
+    try {
+      const toolbar = page.getByTestId('mobile-edit-toolbar');
+      await toolbar.getByRole('button', { name: '更多', exact: true }).tap();
+      const moreSheet = page.getByRole('dialog', { name: '手机更多工具面板' });
+      await expect(moreSheet).toBeVisible();
+      await expect(moreSheet.getByRole('button', { name: '命令', exact: true })).toHaveCount(0);
+      await moreSheet.getByRole('button', { name: '其他图表', exact: true }).tap();
+
+      const diagramSheet = page.getByRole('dialog', { name: '手机其他图表面板' });
+      await expect(diagramSheet).toBeVisible();
+      await expect(diagramSheet.locator('[data-diagram-type]')).toHaveCount(diagramOrder.length);
+      await diagramSheet.getByRole('button', { name: '桑基图', exact: true }).tap();
+      await waitForDiagram(page);
+      await expect(page.locator('#view')).toContainText('访问首页');
+      await expect(page.locator('#view')).toContainText('支付成功');
+
+      await page.setViewportSize({ height: 390, width: 844 });
+      await toolbar.getByRole('button', { name: '更多', exact: true }).tap();
+      await page
+        .getByRole('dialog', { name: '手机更多工具面板' })
+        .getByRole('button', { name: '其他图表', exact: true })
+        .tap();
+      const landscapeSheet = page.getByRole('dialog', { name: '手机其他图表面板' });
+      await expect(landscapeSheet).toBeVisible();
+      const bounds = await landscapeSheet.boundingBox();
+      expect(bounds?.x ?? -1).toBeGreaterThanOrEqual(0);
+      expect((bounds?.x ?? 0) + (bounds?.width ?? 0)).toBeLessThanOrEqual(845);
+      await landscapeSheet.getByRole('button', { name: '看板', exact: true }).tap();
+      await waitForDiagram(page);
+      await expect(page.locator('#view')).toContainText('待规划');
+      await expect(page.locator('#view')).not.toContainText('访问首页');
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)
+      ).toBe(true);
     } finally {
       await context.close();
     }

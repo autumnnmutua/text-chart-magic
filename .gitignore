@@ -9,6 +9,8 @@
 /functions
 /node_modules
 /snapshots.js
+/.netlify/
+/deno.lock
 
 # Playwright
 /test-results/

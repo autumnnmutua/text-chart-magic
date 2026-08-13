@@ -1,4 +1,4 @@
-export type WorkspacePanel = 'code' | 'layers' | 'search';
+export type WorkspacePanel = 'code' | 'diagrams' | 'layers' | 'search';
 
 let active = $state<WorkspacePanel | undefined>();
 

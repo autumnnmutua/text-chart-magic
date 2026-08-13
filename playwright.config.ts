@@ -1,6 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
-const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+const packageManagerCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
+const externalBaseURL = process.env.PLAYWRIGHT_BASE_URL;
 
 export default defineConfig({
   forbidOnly: !!process.env.CI,
@@ -15,16 +16,18 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
   testDir: './tests',
   use: {
-    baseURL: 'http://localhost:3000',
+    baseURL: externalBaseURL ?? 'http://localhost:3000',
     browserName: 'chromium',
     permissions: ['clipboard-read', 'clipboard-write'],
     trace: 'retain-on-failure',
     viewport: { width: 1920, height: 1080 }
   },
-  webServer: {
-    command: `${npmCommand} run ${process.env.CI ? 'preview' : 'dev'}`,
-    url: 'http://localhost:3000',
-    reuseExistingServer: !process.env.CI
-  },
+  webServer: externalBaseURL
+    ? undefined
+    : {
+        command: `${packageManagerCommand} run ${process.env.CI ? 'preview' : 'dev'}`,
+        url: 'http://localhost:3000',
+        reuseExistingServer: !process.env.CI
+      },
   workers: process.env.CI ? 3 : undefined
 });

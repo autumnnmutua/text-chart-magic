@@ -2,6 +2,7 @@ import { notify } from './notify';
 import {
   searchEditableSourceText,
   searchVisualConnectionText,
+  searchVisualElementText,
   type DiagramSearchResult
 } from './searchModel';
 import { replaceAllDiagramText, validatedState } from './state.svelte';
@@ -20,8 +21,8 @@ const focusCurrent = (): void => {
   const result = results[currentIndex];
   if (!result) return;
   requestVisualFocus(
-    result.connectionId
-      ? { visualId: result.connectionId }
+    result.connectionId || result.visualElementId
+      ? { visualId: result.connectionId ?? result.visualElementId }
       : { occurrence: result.occurrence, text: result.containerText }
   );
 };
@@ -55,14 +56,16 @@ export const globalSearch = {
 
 export const refreshGlobalSearch = (
   code = validatedState.current.code,
-  connections = validatedState.current.visualConnections
+  connections = validatedState.current.visualConnections,
+  elements = validatedState.current.visualElements
 ): void => {
-  const fingerprint = `${code}\u0000${JSON.stringify(connections ?? {})}\u0000${query}\u0000${caseSensitive}\u0000${wholeWord}`;
+  const fingerprint = `${code}\u0000${JSON.stringify(connections ?? {})}\u0000${JSON.stringify(elements ?? {})}\u0000${query}\u0000${caseSensitive}\u0000${wholeWord}`;
   if (fingerprint === sourceFingerprint) return;
   sourceFingerprint = fingerprint;
   results = [
     ...searchEditableSourceText(code, query, { caseSensitive, wholeWord }),
-    ...searchVisualConnectionText(connections, query, { caseSensitive, wholeWord })
+    ...searchVisualConnectionText(connections, query, { caseSensitive, wholeWord }),
+    ...searchVisualElementText(elements, query, { caseSensitive, wholeWord })
   ];
   currentIndex = Math.min(currentIndex, Math.max(results.length - 1, 0));
   focusCurrent();
@@ -123,7 +126,8 @@ export const replaceCurrentSearchResult = (): boolean => {
       connectionId: result.connectionId,
       currentText: result.text,
       nextText: replacement,
-      range: result.range
+      range: result.range,
+      visualElementId: result.visualElementId
     }
   ]);
   if (replaced > 0) {
@@ -139,7 +143,8 @@ export const replaceAllSearchResults = (): number => {
       connectionId: result.connectionId,
       currentText: result.text,
       nextText: replacement,
-      range: result.range
+      range: result.range,
+      visualElementId: result.visualElementId
     }))
   );
   if (replaced > 0) {

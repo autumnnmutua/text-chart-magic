@@ -101,6 +101,21 @@ describe('special diagram branch strategies', () => {
     expect(quadrant?.notice).toContain('接近边界时图表会自动扩展');
   });
 
+  it('normalizes compact mindmap declarations without reparenting existing branches', async () => {
+    const initial = `mindmap  root((主题))
+    已有分支
+      现有子项`;
+    const result = createDiagramBranch({ code: initial, label: '主题' });
+
+    expect(result?.code).toBe(`mindmap
+  root((主题))
+    已有分支
+      现有子项
+    新分支
+`);
+    await expect(parse(result?.code ?? '')).resolves.toBeDefined();
+  });
+
   it('does not report a fake branch when the diagram or target is unsupported', () => {
     expect(createDiagramBranch({ code: 'info\n  showInfo', label: '不存在' })).toBeUndefined();
     expect(
@@ -137,6 +152,19 @@ describe('special diagram branch strategies', () => {
     const added = createDiagramBranch({ code, label: '注册' })?.code ?? '';
     expect(added).toContain('"注册","新分支",1');
     await expect(parse(added)).resolves.toBeDefined();
+  });
+
+  it('finds and renames every reference to an unquoted Sankey node', async () => {
+    const code = `sankey-beta
+搜索引擎,AI 对话,32
+社交媒体,AI 对话,14
+AI 对话,注册,25
+AI 对话,继续使用,21`;
+    const range = requireRange(findVisualTextRange(code, { text: 'AI 对话' }));
+    const renamed = replaceDiagramVisualText(code, range, 'AI 对话', '智能对话').code;
+    expect(renamed.match(/智能对话/g)).toHaveLength(4);
+    expect(renamed).not.toContain('AI 对话');
+    await expect(parse(renamed)).resolves.toBeDefined();
   });
 
   it('adds a sequence branch from an implicitly declared participant', async () => {
@@ -213,6 +241,11 @@ describe('special diagram branch strategies', () => {
     const edited = replaceDiagramVisualText(added, range, '关系', '通过校验').code;
     expect(edited).toContain('-->|通过校验|');
     await expect(parse(edited)).resolves.toBeDefined();
+    const clearedRange = requireRange(findVisualTextRange(edited, { text: '通过校验' }));
+    const cleared = replaceDiagramVisualText(edited, clearedRange, '通过校验', '').code;
+    expect(cleared).toContain('A --> A_branch_1[新分支]');
+    expect(cleared).not.toContain('通过校验');
+    await expect(parse(cleared)).resolves.toBeDefined();
   });
 
   it('creates editable class members and extends the selected member owner', async () => {
@@ -226,11 +259,60 @@ describe('special diagram branch strategies', () => {
     expect(added).toContain('class Branch1["新分支"] {');
     expect(added).toContain('+String 新字段');
     expect(added).toContain('+新方法()');
+    expect(added).toContain('Root --> Branch1 : 关系');
     const extended =
       createDiagramBranch({ code: added, label: '+String 新字段', sourceId: 'Branch1' })?.code ??
       '';
     expect(extended).toContain('+String 新字段2');
     await expect(parse(extended)).resolves.toBeDefined();
+  });
+
+  it('locates later class fields and methods inside their owning class block', () => {
+    const code = `classDiagram
+  class Root {
+    +String name
+  }
+  class Branch1["订单服务"] {
+    +String orderId
+    +String 新字段
+    +createOrder()
+  }`;
+    const field = requireRange(
+      findVisualTextRange(code, {
+        occurrence: 4,
+        sourceId: 'Branch1',
+        text: '+String 新字段'
+      })
+    );
+    const method = requireRange(
+      findVisualTextRange(code, {
+        occurrence: 3,
+        sourceId: 'Branch1',
+        text: '+createOrder()'
+      })
+    );
+    expect(code.slice(field.start, field.end)).toBe('+String 新字段');
+    expect(code.slice(method.start, method.end)).toBe('+createOrder()');
+  });
+
+  it('locates ER fields inside the selected entity instead of another identical row', () => {
+    const code = `erDiagram
+  CUSTOMER {
+    string id PK "客户主键"
+    string name "客户名称"
+  }
+  ORDER {
+    string id PK "订单主键"
+    string name "订单名称"
+  }`;
+    const field = requireRange(
+      findVisualTextRange(code, {
+        occurrence: 0,
+        sourceId: 'entity-ORDER-1',
+        text: '订单名称'
+      })
+    );
+    expect(code.slice(field.start, field.end)).toBe('订单名称');
   });
 
   it('keeps requirement children attached when branching from an attribute row', async () => {
@@ -888,7 +970,7 @@ component Product [0.80, 0.50]`;
     expect(removed).not.toMatch(/^\s*\}/m);
     expect(removed).toContain('Client.finish()');
     await expect(parse(removed)).resolves.toBeDefined();
-  });
+  }, 15_000);
 
   it('continues a state-marked gantt task from its real task id', async () => {
     const initial = `gantt

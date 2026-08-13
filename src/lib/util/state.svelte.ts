@@ -4,6 +4,7 @@ import type {
   State,
   ValidatedState,
   VisualConnection,
+  VisualElement,
   VisualLayerState,
   VisualStyle
 } from '$/types';
@@ -34,6 +35,7 @@ import {
 } from './diagramBranch';
 import { diagramStateKey } from './diagramStateKey';
 import { showDiagramNotice } from './diagramNotice.svelte';
+import { CURRENT_DOCUMENT_SCHEMA_VERSION } from './documentSchema';
 import { notify } from './notify';
 import { readJSON, writeJSON } from './persist.svelte';
 import { deserializeState, serializeState } from './serde';
@@ -45,6 +47,12 @@ import {
   type VisualTextTarget
 } from './visualTextEdit';
 import { normalizeVisualConnections } from './visualConnections';
+import {
+  collectVisualElementSubtreeIds,
+  normalizeVisualElements,
+  VISUAL_ELEMENT_PREFIX
+} from './visualElements';
+import { clampViewZoom } from './viewport';
 
 const formatJSON = (data: unknown): string => JSON.stringify(data, undefined, 2);
 
@@ -98,19 +106,14 @@ export const defaultState: State = {
   }),
   panZoom: true,
   rough: false,
+  schemaVersion: CURRENT_DOCUMENT_SCHEMA_VERSION,
   snapToGrid: true,
   updateDiagram: true
 };
 
-const urlParseFailedState = `flowchart TD
-    A[链接读取失败] -->|重新检查| B[请确认链接是否完整]
-    B --> C{这个链接是别人发给你的吗}
-    C -->|是| D[请对方重新发送完整链接]
-    C -->|不是| E[回到编辑器重新创建图表]
-    E --> F[可继续编辑和导出文件]`;
-
 const CODE_STORE_KEY = 'codeStore';
 const DIAGRAM_INITIAL_STORE_KEY = 'diagramInitialStore';
+const MAX_VISUAL_METADATA_ENTRIES = 10_000;
 
 const isFinitePoint = (value: unknown): value is NonNullable<State['pan']> => {
   if (!value || typeof value !== 'object') return false;
@@ -126,7 +129,7 @@ const isFinitePoint = (value: unknown): value is NonNullable<State['pan']> => {
 const normalizeVisualPositions = (value: unknown): State['visualPositions'] => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const positions: NonNullable<State['visualPositions']> = {};
-  for (const [id, point] of Object.entries(value)) {
+  for (const [id, point] of Object.entries(value).slice(0, MAX_VISUAL_METADATA_ENTRIES)) {
     if (id && isFinitePoint(point)) {
       // Copy numeric fields explicitly so Svelte proxies never reach structuredClone/storage.
       positions[id] = { x: point.x, y: point.y };
@@ -138,7 +141,7 @@ const normalizeVisualPositions = (value: unknown): State['visualPositions'] => {
 const normalizeVisualStyles = (value: unknown): State['visualStyles'] => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const styles: NonNullable<State['visualStyles']> = {};
-  for (const [id, rawStyle] of Object.entries(value)) {
+  for (const [id, rawStyle] of Object.entries(value).slice(0, MAX_VISUAL_METADATA_ENTRIES)) {
     if (!id || !rawStyle || typeof rawStyle !== 'object' || Array.isArray(rawStyle)) continue;
     const candidate = rawStyle as Record<string, unknown>;
     const style: NonNullable<State['visualStyles']>[string] = {};
@@ -156,7 +159,7 @@ const normalizeVisualStyles = (value: unknown): State['visualStyles'] => {
 const normalizeVisualLayers = (value: unknown): State['visualLayers'] => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const layers: NonNullable<State['visualLayers']> = {};
-  for (const [id, rawLayer] of Object.entries(value)) {
+  for (const [id, rawLayer] of Object.entries(value).slice(0, MAX_VISUAL_METADATA_ENTRIES)) {
     if (!id || !rawLayer || typeof rawLayer !== 'object' || Array.isArray(rawLayer)) continue;
     const candidate = rawLayer as Record<string, unknown>;
     const layer: VisualLayerState = {};
@@ -183,6 +186,7 @@ export const normalizeState = (value: unknown): State => {
     code: typeof candidate.code === 'string' ? candidate.code : defaultState.code,
     mermaid: typeof candidate.mermaid === 'string' ? candidate.mermaid : defaultState.mermaid,
     rough: typeof candidate.rough === 'boolean' ? candidate.rough : defaultState.rough,
+    schemaVersion: CURRENT_DOCUMENT_SCHEMA_VERSION,
     updateDiagram:
       typeof candidate.updateDiagram === 'boolean'
         ? candidate.updateDiagram
@@ -198,15 +202,43 @@ export const normalizeState = (value: unknown): State => {
   if (!isFinitePoint(candidate.pan)) delete normalized.pan;
   if (typeof candidate.zoom !== 'number' || !Number.isFinite(candidate.zoom)) {
     delete normalized.zoom;
+  } else {
+    normalized.zoom = clampViewZoom(candidate.zoom);
   }
   normalized.visualPositions = normalizeVisualPositions(candidate.visualPositions);
   normalized.visualStyles = normalizeVisualStyles(candidate.visualStyles);
   normalized.visualLayers = normalizeVisualLayers(candidate.visualLayers);
   normalized.visualConnections = normalizeVisualConnections(candidate.visualConnections);
+  normalized.visualElements = normalizeVisualElements(candidate.visualElements);
+  for (const element of Object.values(normalized.visualElements ?? {})) {
+    if (
+      element.parentId?.startsWith(VISUAL_ELEMENT_PREFIX) &&
+      !normalized.visualElements?.[element.parentId]
+    ) {
+      delete element.parentId;
+    }
+  }
+  for (const connection of Object.values(normalized.visualConnections ?? {})) {
+    for (const endpoint of [connection.source, connection.target]) {
+      if (
+        endpoint.elementId?.startsWith(VISUAL_ELEMENT_PREFIX) &&
+        !normalized.visualElements?.[endpoint.elementId]
+      ) {
+        delete endpoint.elementId;
+        delete endpoint.anchor;
+      }
+    }
+  }
+  if (typeof candidate.sampleDescription === 'string' && candidate.sampleDescription.trim()) {
+    normalized.sampleDescription = candidate.sampleDescription.trim().slice(0, 4000);
+  } else {
+    delete normalized.sampleDescription;
+  }
   if (!normalized.visualPositions) delete normalized.visualPositions;
   if (!normalized.visualStyles) delete normalized.visualStyles;
   if (!normalized.visualLayers) delete normalized.visualLayers;
   if (!normalized.visualConnections) delete normalized.visualConnections;
+  if (!normalized.visualElements) delete normalized.visualElements;
   return normalized;
 };
 
@@ -252,9 +284,17 @@ const validatedStateOf = (state: State, serialized: string): ValidatedState => (
 });
 
 const initialState = $state.snapshot(input) as State;
+const initialSerialized = (() => {
+  try {
+    return serializeState(initialState);
+  } catch (error) {
+    console.warn('Stored document is too large to place in the URL hash.', error);
+    return '';
+  }
+})();
 // Only ever replaced wholesale, so raw (shallow) reactivity is enough.
 let validatedCurrent = $state.raw<ValidatedState>(
-  validatedStateOf(initialState, serializeState(initialState))
+  validatedStateOf(initialState, initialSerialized)
 );
 
 const undoStack = $state<State[]>([]);
@@ -270,14 +310,11 @@ let currentDiagramInitialType = storedDiagramInitial?.diagramType ?? '';
 let captureNextValidAsInitial = !storedDiagramInitial;
 let processRevision = 0;
 let latestStateValidation: Promise<void> = Promise.resolve();
-let invalidRollbackTimer: ReturnType<typeof setTimeout> | undefined;
-const INVALID_ROLLBACK_DELAY_MS = 1200;
 
 const processState = async (state: State) => {
   const processed = validatedStateOf(state, '');
   // No changes should be done to fields part of `state`.
   try {
-    processed.serialized = serializeState(state);
     const { diagramType } = await parse(state.code);
     processed.diagramType = diagramType;
     JSON.parse(state.mermaid);
@@ -325,31 +362,41 @@ const processState = async (state: State) => {
 
 // Replaces the old URL-hash store subscription; assigned by initURLSubscription.
 let updateHash: ((serialized: string) => void) | undefined;
+let shareSerializationWarningShown = false;
+
+const serializeForHash = (state: State, showWarning = false): string | undefined => {
+  try {
+    const serialized = serializeState(state);
+    shareSerializationWarningShown = false;
+    return serialized;
+  } catch (error) {
+    console.warn('Current document is too large to store in the URL hash.', error);
+    if (showWarning && !shareSerializationWarningShown) {
+      shareSerializationWarningShown = true;
+      notify('当前作品较大，地址栏分享已暂停；本机编辑和作品备份仍可正常使用。');
+    }
+    return undefined;
+  }
+};
 
 // Persist the current input state and asynchronously re-validate it,
 // publishing the result to `validatedState` (and the URL hash, once
 // initURLSubscription has run). Only called from update(), which suppresses
 // dependency tracking.
 const processSnapshot = (snapshot: State): void => {
-  if (invalidRollbackTimer) clearTimeout(invalidRollbackTimer);
-  invalidRollbackTimer = undefined;
   const revision = ++processRevision;
   latestStateValidation = processState(snapshot).then((processed) => {
     if (revision === processRevision) {
+      const serialized = serializeForHash(snapshot, true);
+      processed.serialized = serialized ?? validatedCurrent.serialized;
       if (processed.error) {
         if (shouldRollbackInvalidState(snapshot)) {
           restoreLastValidState();
           return;
         }
-        if (lastValidState && snapshot.code !== lastValidState.code) {
-          invalidRollbackTimer = setTimeout(() => {
-            invalidRollbackTimer = undefined;
-            if (input.code === snapshot.code) restoreLastValidState();
-          }, INVALID_ROLLBACK_DELAY_MS);
-        }
       }
       validatedCurrent = processed;
-      updateHash?.(processed.serialized);
+      if (serialized) updateHash?.(serialized);
       if (!processed.error) {
         rememberValidState(snapshot, processed.diagramType);
       }
@@ -366,9 +413,36 @@ export const waitForStateValidation = async (): Promise<void> => {
   }
 };
 
+let codeStoreWriteSucceeded = $state(true);
+let persistenceFailureNotified = false;
+
+export const persistenceState = {
+  get hasWriteFailure(): boolean {
+    return !codeStoreWriteSucceeded;
+  },
+  get lastWriteSucceeded(): boolean {
+    return codeStoreWriteSucceeded;
+  }
+};
+
+const persistCodeSnapshot = (snapshot: State): boolean => {
+  const previous = codeStoreWriteSucceeded;
+  codeStoreWriteSucceeded = writeJSON(CODE_STORE_KEY, snapshot);
+  if (!codeStoreWriteSucceeded && !persistenceFailureNotified) {
+    persistenceFailureNotified = true;
+    notify(
+      '浏览器本地存储不可用，当前修改只保留在页面中。请导出作品备份，并在关闭页面前恢复存储空间。'
+    );
+  } else if (codeStoreWriteSucceeded && !previous) {
+    persistenceFailureNotified = false;
+    notify('浏览器本地存储已恢复，当前作品已重新写入本机。');
+  }
+  return codeStoreWriteSucceeded;
+};
+
 const persistAndProcess = (): void => {
   const snapshot = $state.snapshot(input) as State;
-  writeJSON(CODE_STORE_KEY, snapshot);
+  persistCodeSnapshot(snapshot);
   processSnapshot(snapshot);
 };
 
@@ -442,8 +516,8 @@ function getUnsafePaths(object: object, unsafeKeys: string[], path: string[] = [
 }
 
 /**
- * Asks the user for confirmation if the config contains settings that might
- * pose security risks, such as a relaxed `securityLevel`.
+ * Removes settings that can execute or load untrusted content. Users can add
+ * trusted advanced settings again from the local configuration editor.
  *
  * @param config - The Mermaid configuration to sanitize.
  * @returns The sanitized Mermaid configuration as a JSON string.
@@ -457,16 +531,7 @@ export const sanitizeConfig = (config: string | MermaidConfig) => {
     return lodashGet(mermaidConfig, path) !== lodashGet(defaultMermaidConfig, path);
   });
 
-  if (
-    unsafePaths.length > 0 &&
-    confirm(
-      `为了安全，编辑器将移除以下高风险配置：\n${unsafePaths
-        .map((unsafePath) => {
-          return `${JSON.stringify(unsafePath.join('.'))}: ${JSON.stringify(lodashGet(mermaidConfig, unsafePath))}`;
-        })
-        .join(',\n')}\n如果你完全信任这个图表来源，可以点击取消并保留原配置。`
-    )
-  ) {
+  if (unsafePaths.length > 0) {
     for (const unsafePath of unsafePaths) {
       const pathToObject = [...unsafePath];
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- We know this exists since it was found in `getUnsafePaths`
@@ -476,26 +541,27 @@ export const sanitizeConfig = (config: string | MermaidConfig) => {
       // eslint-disable-next-line @typescript-eslint/no-dynamic-delete -- Copied from mermaid code
       delete lastObject[lastKey];
     }
+    notify(`已移除 ${unsafePaths.length} 项不安全的外部图表配置。`);
   }
   return formatJSON(mermaidConfig);
 };
 
 export const loadState = (data: string): void => {
   update((state) => {
-    clearUndoStack();
-    if (!data) return;
+    if (!data) {
+      clearUndoStack();
+      return false;
+    }
     let next: State;
     try {
       next = normalizeState(deserializeState(data));
       next.mermaid = sanitizeConfig(next.mermaid || defaultState.mermaid);
     } catch (error) {
-      next = $state.snapshot(state) as State;
-      if (data) {
-        console.error('Init error', error);
-        next.code = urlParseFailedState;
-        next.mermaid = defaultState.mermaid;
-      }
+      console.warn('Unable to load the state from the URL.', error);
+      notify('链接中的图表数据无效或过大，当前作品没有被替换。');
+      return false;
     }
+    clearUndoStack();
     if (diagramStateKey(state) !== diagramStateKey(next)) {
       captureNextValidAsInitial = true;
     }
@@ -510,7 +576,9 @@ const undoableStoreKeys = [
   'grid',
   'rough',
   'snapToGrid',
+  'sampleDescription',
   'visualConnections',
+  'visualElements',
   'visualLayers',
   'visualStyles',
   'visualPositions'
@@ -569,7 +637,7 @@ const restoreLastValidState = (): void => {
     });
     replaceStateData(input, restored);
     const snapshot = cloneState($state.snapshot(input) as State);
-    writeJSON(CODE_STORE_KEY, snapshot);
+    persistCodeSnapshot(snapshot);
     processSnapshot(snapshot);
   });
 };
@@ -949,6 +1017,91 @@ export const addVisualConnection = (connection: VisualConnection): boolean => {
   return added;
 };
 
+export const addVisualElement = (
+  element: VisualElement,
+  connection?: VisualConnection
+): boolean => {
+  const normalizedElement = normalizeVisualElements({ [element.id]: element })?.[element.id];
+  const normalizedConnection = connection
+    ? normalizeVisualConnections({ [connection.id]: connection })?.[connection.id]
+    : undefined;
+  if (!normalizedElement || (connection && !normalizedConnection)) return false;
+  let added = false;
+  update((state) => {
+    if (state.visualElements?.[normalizedElement.id]) return false;
+    pushUndoFor(state, connection ? 'branch' : 'state');
+    state.visualElements = {
+      ...(state.visualElements ?? {}),
+      [normalizedElement.id]: normalizedElement
+    };
+    if (normalizedConnection) {
+      state.visualConnections = {
+        ...(state.visualConnections ?? {}),
+        [normalizedConnection.id]: normalizedConnection
+      };
+    }
+    state.updateDiagram = true;
+    added = true;
+  });
+  return added;
+};
+
+export const updateVisualElement = (element: VisualElement): boolean => {
+  const normalized = normalizeVisualElements({ [element.id]: element })?.[element.id];
+  if (!normalized) return false;
+  let changed = false;
+  update((state) => {
+    const current = state.visualElements?.[normalized.id];
+    if (!current || JSON.stringify(current) === JSON.stringify(normalized)) return false;
+    pushUndoFor(state, 'interaction');
+    state.visualElements = {
+      ...(state.visualElements ?? {}),
+      [normalized.id]: normalized
+    };
+    state.updateDiagram = true;
+    changed = true;
+  });
+  return changed;
+};
+
+export const deleteVisualElements = (ids: readonly string[]): number => {
+  const uniqueIds = ids.filter((id, index) => Boolean(id) && ids.indexOf(id) === index);
+  let deleted = 0;
+  update((state) => {
+    const existing = collectVisualElementSubtreeIds(state.visualElements, uniqueIds);
+    if (existing.length === 0) return false;
+    pushUndoFor(state, existing.length > 1 ? 'batch' : 'delete');
+    const removed = Object.fromEntries(existing.map((id) => [id, true])) as Record<string, true>;
+    const isRemoved = (id: string | undefined): boolean => Boolean(id && removed[id]);
+    const remainingElements = Object.fromEntries(
+      Object.entries(state.visualElements ?? {}).filter(([id]) => !isRemoved(id))
+    );
+    const remainingConnections = Object.fromEntries(
+      Object.entries(state.visualConnections ?? {}).filter(
+        ([, item]) => !isRemoved(item.source.elementId) && !isRemoved(item.target.elementId)
+      )
+    );
+    const withoutRemoved = <T>(value: Record<string, T> | undefined): Record<string, T> =>
+      Object.fromEntries(Object.entries(value ?? {}).filter(([id]) => !isRemoved(id)));
+    if (Object.keys(remainingElements).length) state.visualElements = remainingElements;
+    else delete state.visualElements;
+    if (Object.keys(remainingConnections).length) state.visualConnections = remainingConnections;
+    else delete state.visualConnections;
+    const positions = withoutRemoved(state.visualPositions);
+    const styles = withoutRemoved(state.visualStyles);
+    const layers = withoutRemoved(state.visualLayers);
+    if (Object.keys(positions).length) state.visualPositions = positions;
+    else delete state.visualPositions;
+    if (Object.keys(styles).length) state.visualStyles = styles;
+    else delete state.visualStyles;
+    if (Object.keys(layers).length) state.visualLayers = layers;
+    else delete state.visualLayers;
+    state.updateDiagram = true;
+    deleted = existing.length;
+  });
+  return deleted;
+};
+
 export const updateVisualConnection = (connection: VisualConnection): boolean => {
   const normalized = normalizeVisualConnections({ [connection.id]: connection })?.[connection.id];
   if (!normalized) return false;
@@ -1064,6 +1217,7 @@ export interface DiagramTextReplacement {
   currentText: string;
   nextText: string;
   range: SourceTextRange;
+  visualElementId?: string;
 }
 
 export const replaceAllDiagramText = (replacements: readonly DiagramTextReplacement[]): number => {
@@ -1071,8 +1225,9 @@ export const replaceAllDiagramText = (replacements: readonly DiagramTextReplacem
   update((state) => {
     let nextCode = state.code;
     for (const replacement of replacements
-      .filter(({ connectionId }) => !connectionId)
+      .filter(({ connectionId, visualElementId }) => !connectionId && !visualElementId)
       .sort((left, right) => right.range.start - left.range.start)) {
+      if (replacement.currentText === replacement.nextText) continue;
       if (
         nextCode.slice(replacement.range.start, replacement.range.end) !== replacement.currentText
       ) {
@@ -1097,6 +1252,7 @@ export const replaceAllDiagramText = (replacements: readonly DiagramTextReplacem
       for (const replacement of matches.sort(
         (left, right) => right.range.start - left.range.start
       )) {
+        if (replacement.currentText === replacement.nextText) continue;
         if (
           label.slice(replacement.range.start, replacement.range.end) !== replacement.currentText
         ) {
@@ -1111,10 +1267,42 @@ export const replaceAllDiagramText = (replacements: readonly DiagramTextReplacem
         connectionsChanged = true;
       }
     }
-    if (nextCode === state.code && !connectionsChanged) return false;
+    const nextElements = { ...(state.visualElements ?? {}) };
+    const elementReplacements: Record<string, DiagramTextReplacement[]> = {};
+    for (const replacement of replacements) {
+      if (!replacement.visualElementId) continue;
+      elementReplacements[replacement.visualElementId] ??= [];
+      elementReplacements[replacement.visualElementId].push(replacement);
+    }
+    let elementsChanged = false;
+    for (const [elementId, matches] of Object.entries(elementReplacements)) {
+      const element = nextElements[elementId];
+      if (!element) continue;
+      let label = element.label;
+      let elementChanged = false;
+      for (const replacement of matches.sort(
+        (left, right) => right.range.start - left.range.start
+      )) {
+        if (replacement.currentText === replacement.nextText) continue;
+        if (
+          label.slice(replacement.range.start, replacement.range.end) !== replacement.currentText
+        ) {
+          continue;
+        }
+        label = `${label.slice(0, replacement.range.start)}${replacement.nextText}${label.slice(replacement.range.end)}`;
+        replaced += 1;
+        elementChanged = true;
+      }
+      if (elementChanged) {
+        nextElements[elementId] = { ...element, label: label.slice(0, 240) };
+        elementsChanged = true;
+      }
+    }
+    if (nextCode === state.code && !connectionsChanged && !elementsChanged) return false;
     pushUndoFor(state, 'replace');
     state.code = nextCode;
     if (connectionsChanged) state.visualConnections = nextConnections;
+    if (elementsChanged) state.visualElements = nextElements;
     state.updateDiagram = true;
   });
   return replaced;
@@ -1171,7 +1359,13 @@ export const loadDiagramTemplate = (
     Partial<
       Pick<
         State,
-        'mermaid' | 'visualConnections' | 'visualLayers' | 'visualPositions' | 'visualStyles'
+        | 'mermaid'
+        | 'sampleDescription'
+        | 'visualConnections'
+        | 'visualElements'
+        | 'visualLayers'
+        | 'visualPositions'
+        | 'visualStyles'
       >
     >
 ): void => {
@@ -1186,6 +1380,7 @@ export const loadDiagramTemplate = (
     const styles = normalizeVisualStyles(template.visualStyles);
     const layers = normalizeVisualLayers(template.visualLayers);
     const connections = normalizeVisualConnections(template.visualConnections);
+    const elements = normalizeVisualElements(template.visualElements);
     if (positions) state.visualPositions = positions;
     else delete state.visualPositions;
     if (styles) state.visualStyles = styles;
@@ -1194,11 +1389,31 @@ export const loadDiagramTemplate = (
     else delete state.visualLayers;
     if (connections) state.visualConnections = connections;
     else delete state.visualConnections;
+    if (elements) state.visualElements = elements;
+    else delete state.visualElements;
+    if (template.sampleDescription?.trim()) {
+      state.sampleDescription = template.sampleDescription.trim().slice(0, 4000);
+    } else {
+      delete state.sampleDescription;
+    }
     state.updateDiagram = true;
   });
 };
 
 export const loadDiagramCode = (code: string): void => loadDiagramTemplate({ code });
+
+export const updateSampleDescription = (value: string | undefined): boolean => {
+  const next = value?.trim().slice(0, 4000) ?? '';
+  let changed = false;
+  update((state) => {
+    if ((state.sampleDescription ?? '') === next) return false;
+    pushUndoFor(state, 'replace', { coalesce: true });
+    if (next) state.sampleDescription = next;
+    else delete state.sampleDescription;
+    changed = true;
+  });
+  return changed;
+};
 
 export const updateVisualStyle = (
   targetId: string,
@@ -1315,6 +1530,7 @@ export const replaceInputState = (next: State): void => {
 
 export const initURLSubscription = (): void => {
   updateHash = (serialized: string) => {
+    if (!serialized) return;
     const hash = `#${serialized}`;
     if (window.location.hash !== hash) replaceNavigationState(hash, {});
   };

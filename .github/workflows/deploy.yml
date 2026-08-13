@@ -1,12 +1,6 @@
-name: Deploy Live Editor
+name: Deploy GitHub Pages
 on:
-  push:
-    branches:
-      - master
-  pull_request:
-    branches:
-      - master
-      - develop
+  workflow_dispatch:
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -43,7 +37,6 @@ jobs:
           path: ./docs
 
   deploy:
-    if: ${{ github.ref == 'refs/heads/master' }}
     needs: build
     runs-on: ubuntu-latest
     environment:

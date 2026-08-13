@@ -18,6 +18,7 @@ export const DEFAULT_CONNECTION_LABEL = '关系';
 export const CONNECTION_SNAP_PX = 14;
 export const TOUCH_CONNECTION_SNAP_PX = 18;
 export const PARALLEL_CONNECTION_SPACING = 12;
+const MAX_VISUAL_CONNECTIONS = 10_000;
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const anchorOrder: VisualAnchorId[] = [
@@ -106,7 +107,7 @@ const normalizeEndpoint = (value: unknown): VisualConnectionEndpoint | undefined
 export const normalizeVisualConnections = (value: unknown): State['visualConnections'] => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const connections: NonNullable<State['visualConnections']> = {};
-  for (const [key, rawConnection] of Object.entries(value)) {
+  for (const [key, rawConnection] of Object.entries(value).slice(0, MAX_VISUAL_CONNECTIONS)) {
     if (!rawConnection || typeof rawConnection !== 'object' || Array.isArray(rawConnection))
       continue;
     const candidate = rawConnection as Record<string, unknown>;
@@ -120,6 +121,7 @@ export const normalizeVisualConnections = (value: unknown): State['visualConnect
           ? key
           : '';
     if (!id) continue;
+    if (connections[id]) continue;
     const direction = ['both', 'forward', 'none'].includes(String(candidate.direction))
       ? (candidate.direction as VisualConnection['direction'])
       : 'forward';
@@ -468,6 +470,7 @@ const renderConnectionGroup = (
     const labelPoint = pointAlongRoute(route);
     const label = createSvgElement('text');
     label.dataset.connectionLabel = 'true';
+    label.setAttribute('aria-label', connection.label);
     label.setAttribute('dominant-baseline', 'central');
     label.setAttribute('paint-order', 'stroke');
     label.setAttribute(
@@ -482,6 +485,10 @@ const renderConnectionGroup = (
     label.setAttribute('text-anchor', 'middle');
     label.setAttribute('x', `${labelPoint.x}`);
     label.setAttribute('y', `${labelPoint.y}`);
+    label.dataset.labelBaseX = `${labelPoint.x}`;
+    label.dataset.labelBaseY = `${labelPoint.y}`;
+    label.style.cursor = 'text';
+    label.style.pointerEvents = 'all';
     label.textContent = connection.label;
     group.append(label);
   }
@@ -512,6 +519,126 @@ const renderConnectionGroup = (
     group.append(handleHit, handle);
   }
   return group;
+};
+
+interface ClientRectBounds {
+  bottom: number;
+  left: number;
+  right: number;
+  top: number;
+}
+
+const labelOffsets: readonly VisualPosition[] = [
+  { x: 0, y: 0 },
+  { x: 0, y: -18 },
+  { x: 0, y: 18 },
+  { x: -24, y: 0 },
+  { x: 24, y: 0 },
+  { x: 0, y: -36 },
+  { x: 0, y: 36 },
+  { x: -24, y: -18 },
+  { x: 24, y: -18 },
+  { x: -24, y: 18 },
+  { x: 24, y: 18 }
+];
+
+const shiftedBounds = (
+  rect: Pick<DOMRect, 'bottom' | 'left' | 'right' | 'top'>,
+  offset: VisualPosition
+): ClientRectBounds => ({
+  bottom: rect.bottom + offset.y,
+  left: rect.left + offset.x,
+  right: rect.right + offset.x,
+  top: rect.top + offset.y
+});
+
+const labelBoundsOverlap = (left: ClientRectBounds, right: ClientRectBounds): boolean => {
+  const gap = 4;
+  return (
+    left.left < right.right + gap &&
+    left.right + gap > right.left &&
+    left.top < right.bottom + gap &&
+    left.bottom + gap > right.top
+  );
+};
+
+const labelOverlapArea = (
+  candidate: ClientRectBounds,
+  placed: readonly ClientRectBounds[]
+): number =>
+  placed.reduce((total, other) => {
+    const width = Math.max(
+      0,
+      Math.min(candidate.right, other.right) - Math.max(candidate.left, other.left)
+    );
+    const height = Math.max(
+      0,
+      Math.min(candidate.bottom, other.bottom) - Math.max(candidate.top, other.top)
+    );
+    return total + width * height;
+  }, 0);
+
+const applyClientLabelOffset = (
+  layer: SVGGElement,
+  label: SVGTextElement,
+  base: VisualPosition,
+  offset: VisualPosition
+): void => {
+  const matrix = layer.getScreenCTM();
+  if (!matrix || (offset.x === 0 && offset.y === 0)) {
+    label.setAttribute('x', `${base.x}`);
+    label.setAttribute('y', `${base.y}`);
+    return;
+  }
+  const screen = new DOMPoint(base.x, base.y).matrixTransform(matrix);
+  const adjusted = new DOMPoint(screen.x + offset.x, screen.y + offset.y).matrixTransform(
+    matrix.inverse()
+  );
+  label.setAttribute('x', `${adjusted.x}`);
+  label.setAttribute('y', `${adjusted.y}`);
+};
+
+const resolveConnectionLabelCollisions = (
+  layer: SVGGElement,
+  changedIds?: ReadonlySet<string>
+): void => {
+  const labels = [...layer.querySelectorAll<SVGTextElement>('[data-connection-label]')];
+  if (labels.length < 2) return;
+  const shouldPlace = (label: SVGTextElement): boolean => {
+    if (!changedIds) return true;
+    const id = label.closest<SVGGElement>('[data-visual-connection]')?.dataset.visualId ?? '';
+    return changedIds.has(id);
+  };
+  const moving = labels.filter(shouldPlace);
+  const placed: ClientRectBounds[] = labels
+    .filter((label) => !shouldPlace(label))
+    .map((label) => label.getBoundingClientRect())
+    .filter((rect) => rect.width > 0 && rect.height > 0)
+    .map((rect) => shiftedBounds(rect, { x: 0, y: 0 }));
+
+  for (const label of moving) {
+    const base = {
+      x: Number(label.dataset.labelBaseX),
+      y: Number(label.dataset.labelBaseY)
+    };
+    if (!Number.isFinite(base.x) || !Number.isFinite(base.y)) continue;
+    applyClientLabelOffset(layer, label, base, { x: 0, y: 0 });
+    const rect = label.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) continue;
+    const options = labelOffsets.map((offset) => ({
+      bounds: shiftedBounds(rect, offset),
+      offset
+    }));
+    const chosen =
+      options.find(({ bounds }) => placed.every((other) => !labelBoundsOverlap(bounds, other))) ??
+      options.reduce((best, option) =>
+        labelOverlapArea(option.bounds, placed) < labelOverlapArea(best.bounds, placed)
+          ? option
+          : best
+      );
+    applyClientLabelOffset(layer, label, base, chosen.offset);
+    placed.push(chosen.bounds);
+  }
 };
 
 const renderAnchorLayer = (
@@ -580,7 +707,10 @@ export const renderVisualConnections = (
   layer.dataset.visualConnectionLayer = 'true';
   const merged = { ...(connections ?? {}), ...overrides };
   const laneOffsets = connectionLaneOffsets(Object.values(merged));
-  for (const connection of Object.values(merged)) {
+  const orderedConnections = Object.values(merged).sort(
+    (left, right) => Number(selectedIds.has(left.id)) - Number(selectedIds.has(right.id))
+  );
+  for (const connection of orderedConnections) {
     layer.append(
       renderConnectionGroup(
         connection,
@@ -592,7 +722,10 @@ export const renderVisualConnections = (
     );
   }
   if (showAnchors) layer.append(renderAnchorLayer(anchors, activeEndpoint));
-  viewport.append(layer);
+  const elementLayer = viewport.querySelector(':scope > g[data-visual-element-layer]');
+  if (elementLayer) viewport.insertBefore(layer, elementLayer);
+  else viewport.append(layer);
+  resolveConnectionLabelCollisions(layer);
 };
 
 export const renderVisualConnectionFrame = (
@@ -635,6 +768,8 @@ export const renderVisualConnectionFrame = (
   );
   if (current) current.replaceWith(replacement);
   else layer.prepend(replacement);
+  if (selectedIds.has(connection.id)) layer.append(replacement);
+  resolveConnectionLabelCollisions(layer, new Set([connection.id]));
   layer.querySelector(':scope > g[data-visual-connection-anchors]')?.remove();
   if (showAnchors) layer.append(renderAnchorLayer(anchors, activeEndpoint));
 };
@@ -654,6 +789,7 @@ export const refreshVisualConnectionsForElements = (
   }
   const { anchors, obstacles } = collectVisualConnectionGeometry(svg, items);
   const laneOffsets = connectionLaneOffsets(Object.values(connections));
+  const refreshedIds = new Set<string>();
   for (const connection of Object.values(connections)) {
     if (
       !elementIds.has(connection.source.elementId ?? '') &&
@@ -673,7 +809,10 @@ export const refreshVisualConnectionsForElements = (
     );
     if (current) current.replaceWith(replacement);
     else layer.prepend(replacement);
+    if (replacement.classList.contains('visual-element-selected')) layer.append(replacement);
+    refreshedIds.add(connection.id);
   }
+  resolveConnectionLabelCollisions(layer, refreshedIds);
 };
 
 export const clientToConnectionPoint = (

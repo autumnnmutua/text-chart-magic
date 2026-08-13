@@ -37,7 +37,7 @@ const branchTargets: Record<string, { label: string; sourceId?: string }> = {
 };
 
 const investorTargets: Record<string, { label: string; sourceId?: string }> = {
-  'AI 产品工作流': { label: 'AI 编排引擎', sourceId: 'agent' },
+  'AI 产品转化桑基图': { label: 'AI 对话' },
   'C4 系统关系图': { label: '业务 API', sourceId: 'api' },
   'SaaS 产品系统架构': { label: '核心业务服务', sourceId: 'core' },
   创业产品路线图: { label: '核心功能开发' },
@@ -101,18 +101,37 @@ describe('investorSamples', () => {
     }
   }, 30_000);
 
-  it('keeps the AI workflow arrows in the same persisted state model as user work', () => {
-    const sample = investorSamples.find(({ diagramType }) => diagramType === 'Block');
+  it('keeps the Sankey showcase balanced across three weighted stages', () => {
+    const sample = investorSamples.find(({ diagramType }) => diagramType === 'Sankey');
     expect(sample).toBeDefined();
+    if (!sample) throw new Error('Sankey investor sample is missing.');
+
+    const lines = sample.state.code.trim().split('\n');
+    const rows = lines.slice(lines.indexOf('sankey-beta') + 1).map((line) => {
+      const [source, target, rawValue] = line.split(',');
+      return { source, target, value: Number(rawValue) };
+    });
+    const features = ['AI 对话', '文档分析', '图片生成', '数据分析'];
+
+    expect(rows).toHaveLength(24);
+    expect(new Set(rows.map(({ value }) => value)).size).toBeGreaterThan(8);
+    for (const feature of features) {
+      const incoming = rows
+        .filter(({ target }) => target === feature)
+        .reduce((total, { value }) => total + value, 0);
+      const outgoing = rows
+        .filter(({ source }) => source === feature)
+        .reduce((total, { value }) => total + value, 0);
+      expect(outgoing, `${feature} should preserve flow totals`).toBe(incoming);
+    }
+
     const normalized = normalizeState({
-      ...sample?.state,
+      ...sample.state,
       mermaid: '{}',
       rough: false,
       updateDiagram: true
     });
-    expect(Object.keys(normalized.visualConnections ?? {})).toHaveLength(8);
-    expect(normalized.visualConnections?.['connection-ai-4'].stroke).toBe('#0f766e');
-    expect(normalized.visualConnections?.['connection-ai-loop'].source.elementId).toBe('feedback');
+    expect(normalized.visualConnections).toBeUndefined();
   });
 
   it('keeps every showcase source-editable and safely expandable', async () => {

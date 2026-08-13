@@ -32,7 +32,7 @@ export const applyVisualStyleToElement = (element: Element, style: VisualStyle):
     const shapeElement = shape as SVGElement;
     if (
       shapeElement.matches(
-        '[data-connection-hit], [data-connection-handle], [data-architecture-group-hit], [data-architecture-group-resize]'
+        '[data-connection-hit], [data-connection-handle], [data-architecture-group-hit], [data-architecture-group-resize], [data-visual-element-hit], [data-visual-element-resize]'
       )
     )
       continue;

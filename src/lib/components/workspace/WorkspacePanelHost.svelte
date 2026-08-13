@@ -2,6 +2,7 @@
   import CodeWorkbench from '$lib/components/workspace/CodeWorkbench.svelte';
   import GlobalSearchPanel from '$lib/components/workspace/GlobalSearchPanel.svelte';
   import LayersPanel from '$lib/components/workspace/LayersPanel.svelte';
+  import MobileDiagramPicker from '$lib/components/workspace/MobileDiagramPicker.svelte';
   import MobileSheet from '$lib/components/workspace/MobileSheet.svelte';
   import { closeGlobalSearch } from '$lib/util/globalSearch.svelte';
   import { closeWorkspacePanel, workspacePanels } from '$lib/util/workspacePanels.svelte';
@@ -13,7 +14,9 @@
       ? '全局搜索与替换'
       : workspacePanels.active === 'code'
         ? '代码工作台'
-        : '图层与大纲'
+        : workspacePanels.active === 'diagrams'
+          ? '图表库'
+          : '图层与大纲'
   );
 
   const close = (): void => {
@@ -28,6 +31,8 @@
       <GlobalSearchPanel embedded={isMobile} />
     {:else if workspacePanels.active === 'code'}
       <CodeWorkbench embedded={isMobile} />
+    {:else if workspacePanels.active === 'diagrams'}
+      <MobileDiagramPicker onSelect={close} />
     {:else}
       <LayersPanel embedded={isMobile} />
     {/if}
@@ -43,7 +48,9 @@
         ? '全局搜索面板'
         : workspacePanels.active === 'code'
           ? '代码工作台'
-          : '图层与大纲面板'}>
+          : workspacePanels.active === 'diagrams'
+            ? '图表库面板'
+            : '图层与大纲面板'}>
       {@render panelContent()}
     </aside>
   {/if}

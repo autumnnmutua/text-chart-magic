@@ -14,10 +14,15 @@ export interface DiagramSearchResult {
   connectionId?: string;
   containerText: string;
   id: string;
-  kind: ReturnType<typeof collectEditableSourceText>[number]['kind'] | '箭头文字';
+  kind:
+    | ReturnType<typeof collectEditableSourceText>[number]['kind']
+    | '箭头文字'
+    | '图标文字'
+    | '图形文字';
   occurrence: number;
   range: SourceTextRange;
   text: string;
+  visualElementId?: string;
 }
 
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -116,6 +121,29 @@ export const searchVisualConnectionText = (
         occurrence: 0,
         range: { end: start + match[0].length, start },
         text: match[0]
+      } satisfies DiagramSearchResult;
+    })
+  );
+};
+
+export const searchVisualElementText = (
+  elements: State['visualElements'],
+  query: string,
+  options: SearchOptions
+): DiagramSearchResult[] => {
+  const pattern = createSearchPattern(query, options);
+  if (!pattern) return [];
+  return Object.values(elements ?? {}).flatMap((element) =>
+    [...element.label.matchAll(pattern)].map((match) => {
+      const start = match.index ?? 0;
+      return {
+        containerText: element.label,
+        id: `element:${element.id}:${start}:${start + match[0].length}`,
+        kind: element.kind === 'icon' ? '图标文字' : '图形文字',
+        occurrence: 0,
+        range: { end: start + match[0].length, start },
+        text: match[0],
+        visualElementId: element.id
       } satisfies DiagramSearchResult;
     })
   );

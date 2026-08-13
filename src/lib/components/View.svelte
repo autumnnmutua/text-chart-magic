@@ -1,11 +1,16 @@
 <script lang="ts">
-  import type { State, ValidatedState, VisualConnection, VisualConnectionEndpoint } from '$/types';
-  import { recordRenderTime, shouldRefreshView } from '$/util/autoSync';
+  import type {
+    State,
+    ValidatedState,
+    VisualConnection,
+    VisualConnectionEndpoint,
+    VisualElement
+  } from '$/types';
+  import { markRenderedState, recordRenderTime, shouldRefreshView } from '$/util/autoSync';
   import { render as renderDiagram } from '$/util/mermaid';
   import { PanZoomState } from '$/util/panZoom';
   import {
     addBlockArrow,
-    addDiagramBranch,
     addVisualConnection,
     deleteDiagramElement,
     moveTimelinePeriod as moveTimelinePeriodState,
@@ -15,12 +20,15 @@
     updateArchitectureGroup,
     updateArchitectureGroups,
     updateVisualConnection,
+    updateVisualElement,
     updateVisualPositionsBatch,
+    inputState,
     validatedState
   } from '$/util/state.svelte';
   import { saveStatistics } from '$/util/stats';
   import { Button } from '$lib/components/ui/button';
   import ConnectionToolbar from '$lib/components/workspace/ConnectionToolbar.svelte';
+  import SampleDescription from '$lib/components/workspace/SampleDescription.svelte';
   import FontAwesome, { mayContainFontAwesome } from '$lib/components/FontAwesome.svelte';
   import {
     applyArchitecturePositions,
@@ -39,6 +47,11 @@
     type ArchitectureGroup,
     type ArchitectureResizeHandle
   } from '$lib/util/architectureGroups';
+  import {
+    addFocusedDiagramBranch,
+    clearPendingBranchFocus,
+    takeAddedBranchFocusTarget
+  } from '$lib/util/branchActions';
   import {
     applyBlockPositions,
     clientToSvgPoint,
@@ -59,6 +72,7 @@
     type DiagramBranchRequest,
     type PacketFieldSize
   } from '$lib/util/diagramBranch';
+  import { diagramRenderKey } from '$lib/util/diagramStateKey';
   import { requestEditorFocus } from '$lib/util/editorFocus.svelte';
   import { mobileWorkspace } from '$lib/util/mobileWorkspace.svelte';
   import { getQuadrantBounds, moveQuadrantPointByPixels } from '$lib/util/quadrantLayout';
@@ -85,6 +99,17 @@
   import { deleteSelectedElements } from '$lib/util/visualOperations';
   import { calculateSnap, type ClientBounds, type SnapGuide } from '$lib/util/snapLayout';
   import { applyVisualStyles } from '$lib/util/visualStyle';
+  import { addVisualElementBranch } from '$lib/util/visualElementActions';
+  import { openVisualElementPicker } from '$lib/util/visualElementPicker.svelte';
+  import {
+    applyVisualElementPositions,
+    getVisualElementId,
+    renderVisualElements,
+    updateRenderedVisualElement,
+    VISUAL_ELEMENT_MIN_SCREEN_HEIGHT,
+    VISUAL_ELEMENT_MIN_SCREEN_WIDTH,
+    visualElementSizeFromScreen
+  } from '$lib/util/visualElements';
   import {
     clientToConnectionPoint,
     collectVisualConnectionGeometry,
@@ -107,6 +132,7 @@
     findQuadrantPoint,
     findWardleyPoint,
     findJourneyScore,
+    getEditableVisualLabel,
     normalizeVisibleText,
     replaceDiagramVisualText,
     replaceQuadrantPoint,
@@ -117,7 +143,7 @@
   import uniqueID from 'lodash-es/uniqueId';
   import type { MermaidConfig } from 'mermaid';
   import { mode } from 'mode-watcher';
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
   import { Svg2Roughjs } from 'svg2roughjs';
 
@@ -135,10 +161,12 @@
   let selectedConnectionsFingerprint = '';
   let visualLayersFingerprint = '';
   let visualConnectionsFingerprint = '';
+  let visualElementsFingerprint = '';
   let view: HTMLDivElement | undefined = $state();
   let error = $state(false);
   let renderBusy = $state(false);
   let panZoom = true;
+  let renderedDiagramType: string | undefined;
   let manualUpdate = true;
   let textEditInput: HTMLInputElement | undefined = $state();
   let waitForFontAwesomeToLoad: FontAwesome['waitForFontAwesomeToLoad'] | undefined = $state();
@@ -148,7 +176,8 @@
         currentText: string;
         height: number;
         originalText: string;
-        range: SourceTextRange;
+        range?: SourceTextRange;
+        visualElementId?: string;
         width: number;
         x: number;
         y: number;
@@ -237,12 +266,28 @@
         id: string;
         initial: Record<string, VisualPosition>;
         initialBounds: ClientBounds;
-        kind: 'architecture' | 'block' | 'c4';
+        kind: 'architecture' | 'block' | 'c4' | 'overlay';
         otherBounds: ClientBounds[];
+        captureTarget?: Element;
         pointerClientStart: VisualPosition;
         pointerId?: number;
         pointerType: string;
         pointerStart: VisualPosition;
+        started: boolean;
+        svg: SVGSVGElement;
+      }
+    | undefined = $state();
+  let visualElementResize:
+    | {
+        current: VisualElement;
+        element: SVGGElement;
+        handle: string;
+        initial: VisualElement;
+        minHeight: number;
+        minWidth: number;
+        pointerId: number;
+        position: VisualPosition;
+        start: VisualPosition;
         started: boolean;
         svg: SVGSVGElement;
       }
@@ -296,29 +341,15 @@
   let connectionRenderFrame = 0;
   let linkedConnectionRenderFrame = 0;
   let viewportFitFrame = 0;
+  let viewportFitForce = false;
+  let viewportResizeFrame = 0;
+  let viewportLandscape: boolean | undefined;
   let branchFocusFrame = 0;
+  let renderIdleFrame = 0;
+  let resolveBranchFocus: (() => void) | undefined;
   let connectionEditorRevision = 0;
   const activeTouchPointers = new SvelteSet<number>();
   const lastTextTargetByVisualId = new SvelteMap<string, Element>();
-  let pendingBranchFocusBaseline:
-    | {
-        ids: SvelteSet<string>;
-        labelCounts: SvelteMap<string, number>;
-      }
-    | undefined;
-
-  const captureBranchFocusBaseline = () => {
-    const ids = new SvelteSet<string>();
-    const labelCounts = new SvelteMap<string, number>();
-    for (const item of visualDocument.current) {
-      if (item.kind === 'edge') continue;
-      ids.add(item.id);
-      const label = normalizeVisibleText(item.label).toLocaleLowerCase();
-      if (label) labelCounts.set(label, (labelCounts.get(label) ?? 0) + 1);
-    }
-    return { ids, labelCounts };
-  };
-
   const flushPanZoom = () => {
     if (panZoomPersistTimer) clearTimeout(panZoomPersistTimer);
     panZoomPersistTimer = undefined;
@@ -327,13 +358,34 @@
     if (next) updateCodeStore(next);
   };
 
+  const interactiveCanvasTargetSelector = [
+    '[data-visual-id]',
+    '[data-style-id]',
+    '[data-architecture-group-id]',
+    '[data-architecture-group-resize]',
+    '[data-visual-element-resize]',
+    '[data-connection-endpoint]',
+    '[data-connection-endpoint-hit]',
+    '.node',
+    '.cluster',
+    '.edgePath',
+    '.edgeLabel',
+    '.actor',
+    '.messageText',
+    '.noteText',
+    '.loopText',
+    '.task',
+    '.journey-section',
+    '.legend',
+    '.face',
+    '.branchLabel',
+    'text',
+    'tspan',
+    'foreignObject'
+  ].join(',');
+
   const isInteractiveCanvasTarget = (target: EventTarget | null): boolean =>
-    target instanceof Element &&
-    Boolean(
-      target.closest(
-        '[data-visual-id], [data-architecture-group-id], [data-connection-endpoint], [data-connection-endpoint-hit], .face'
-      )
-    );
+    target instanceof Element && Boolean(target.closest(interactiveCanvasTargetSelector));
 
   const isMobilePanMode = (): boolean => isMobile && mobileWorkspace.mode === 'pan';
 
@@ -352,62 +404,85 @@
       pointerCount > 1 || isMobilePanMode() || !isInteractiveCanvasTarget(target);
   };
 
-  const handlePanZoom = (state: State, graphDiv: SVGSVGElement) => {
+  const handlePanZoom = (state: State, graphDiv: SVGSVGElement, forceFit = false) => {
     try {
-      panZoomState.updateElement(graphDiv, state);
+      panZoomState.updateElement(graphDiv, forceFit ? { pan: undefined, zoom: undefined } : state);
     } catch (error) {
       console.error('PanZoom error:', error);
     }
   };
 
-  const schedulePostRenderViewportFit = () => {
+  const schedulePostRenderViewportFit = (forceFit = false) => {
+    viewportFitForce ||= forceFit;
     if (viewportFitFrame) cancelAnimationFrame(viewportFitFrame);
     viewportFitFrame = requestAnimationFrame(() => {
       viewportFitFrame = requestAnimationFrame(() => {
         viewportFitFrame = 0;
-        panZoomState.resize();
+        const shouldForceFit = viewportFitForce;
+        viewportFitForce = false;
+        if (shouldForceFit) panZoomState.fit();
+        else panZoomState.resize();
       });
     });
   };
 
-  const schedulePendingBranchFocus = () => {
-    const baseline = pendingBranchFocusBaseline;
-    if (!baseline) return;
-    pendingBranchFocusBaseline = undefined;
-    const currentLabelCounts = new SvelteMap<string, number>();
-    const addedByLabel = visualDocument.current.filter(({ kind, label }) => {
-      if (kind === 'edge') return false;
-      const normalizedLabel = normalizeVisibleText(label).toLocaleLowerCase();
-      if (!normalizedLabel) return false;
-      const occurrence = (currentLabelCounts.get(normalizedLabel) ?? 0) + 1;
-      currentLabelCounts.set(normalizedLabel, occurrence);
-      return occurrence > (baseline.labelCounts.get(normalizedLabel) ?? 0);
+  const scheduleViewportResize = () => {
+    if (viewportResizeFrame) cancelAnimationFrame(viewportResizeFrame);
+    viewportResizeFrame = requestAnimationFrame(() => {
+      viewportResizeFrame = 0;
+      snapGuides = [];
+      const nextLandscape = window.matchMedia('(orientation: landscape)').matches;
+      const orientationChanged =
+        viewportLandscape !== undefined && viewportLandscape !== nextLandscape;
+      viewportLandscape = nextLandscape;
+      if (orientationChanged) {
+        branchTarget = undefined;
+        colorTarget = undefined;
+        deleteTarget = undefined;
+      } else if (view) {
+        const currentView = view;
+        const clampTarget = <T extends { x: number; y: number }>(target: T | undefined) =>
+          target
+            ? {
+                ...target,
+                x: Math.min(Math.max(target.x, 12), Math.max(currentView.clientWidth - 96, 12)),
+                y: Math.min(Math.max(target.y, 12), Math.max(currentView.clientHeight - 48, 12))
+              }
+            : undefined;
+        branchTarget = clampTarget(branchTarget);
+        colorTarget = clampTarget(colorTarget);
+        deleteTarget = clampTarget(deleteTarget);
+      }
+      if (isMobile && orientationChanged) panZoomState.fit();
+      else panZoomState.resize();
     });
-    const addedById = visualDocument.current.filter(
-      ({ id, kind }) => kind !== 'edge' && !baseline.ids.has(id)
-    );
-    const addedItems = addedByLabel.length > 0 ? addedByLabel : addedById;
-    const target =
-      addedItems.find(({ kind }) => kind === 'node') ??
-      addedItems.find(({ kind }) => kind === 'text') ??
-      addedItems[0];
-    if (!target) return;
+  };
+
+  const cancelBranchFocusFrame = () => {
     if (branchFocusFrame) cancelAnimationFrame(branchFocusFrame);
-    branchFocusFrame = requestAnimationFrame(() => {
+    branchFocusFrame = 0;
+    resolveBranchFocus?.();
+    resolveBranchFocus = undefined;
+  };
+
+  const schedulePendingBranchFocus = async (): Promise<void> => {
+    const target = takeAddedBranchFocusTarget(visualDocument.current);
+    if (!view || !target?.element.isConnected) return;
+    if (viewportFitFrame) cancelAnimationFrame(viewportFitFrame);
+    viewportFitFrame = 0;
+    const shouldForceFit = viewportFitForce;
+    viewportFitForce = false;
+    if (shouldForceFit) panZoomState.fit();
+    else panZoomState.resize();
+    panZoomState.focusElement(target.element);
+    cancelBranchFocusFrame();
+    await new Promise<void>((resolve) => {
+      resolveBranchFocus = resolve;
       branchFocusFrame = requestAnimationFrame(() => {
         branchFocusFrame = 0;
-        if (!view || !target.element.isConnected) return;
-        const viewport = view.getBoundingClientRect();
-        const bounds = target.element.getBoundingClientRect();
-        const padding = 24;
-        const isVisible =
-          bounds.width > 0 &&
-          bounds.height > 0 &&
-          bounds.left >= viewport.left + padding &&
-          bounds.right <= viewport.right - padding &&
-          bounds.top >= viewport.top + padding &&
-          bounds.bottom <= viewport.bottom - padding;
-        if (!isVisible) panZoomState.focusElement(target.element);
+        if (target.element.isConnected) panZoomState.focusElement(target.element);
+        resolveBranchFocus = undefined;
+        resolve();
       });
     });
   };
@@ -486,6 +561,13 @@
     if (getDiagramKeyword(state.code) === 'architecture-beta') {
       renderArchitectureGroups(graphDiv, state.code, new Set(visualSelection.ids));
     }
+    renderVisualElements(
+      graphDiv,
+      state.visualElements,
+      state.visualPositions,
+      new Set(visualSelection.ids)
+    );
+    annotateEditableTextTargets(graphDiv, state.code);
     const baseItems = buildVisualDocument(graphDiv, state.code).filter(
       ({ id }) => !state.visualConnections?.[id]
     );
@@ -502,7 +584,7 @@
     applyVisualSelectionState(items, new Set(visualSelection.ids), visualSelection.current?.id);
   };
 
-  const textLeafSelector = '.nodeLabel, .edgeLabel, .label, text, foreignObject p';
+  const textLeafSelector = '.nodeLabel, .edgeLabel, .label, text, tspan, foreignObject p';
   const editableTextSelector = `${textLeafSelector}, tspan, foreignObject, .node, .actor, .messageText, .noteText, .loopText, .task, .journey-section, .legend, .face, .branchLabel`;
 
   const getEditableTextElement = (target: EventTarget | null): Element | undefined => {
@@ -580,15 +662,7 @@
     point?: { clientX: number; clientY: number }
   ): string => {
     const textElement = getTextLeafElement(target, point);
-    const text = normalizeVisibleText(textElement?.textContent ?? '');
-    if (/^\s*requirementDiagram\b/im.test(validatedState.current.code)) {
-      const fieldText = text.replace(
-        /^(?:Text|ID|Risk|Verification(?: Method)?|Verify Method|Type|Doc(?:ument)? Ref(?:erence)?):\s*/i,
-        ''
-      );
-      return fieldText.match(/^<<\s*(.+?)\s*>>$/)?.[1] ?? fieldText;
-    }
-    return text;
+    return getEditableVisualLabel(validatedState.current.code, textElement?.textContent ?? '');
   };
 
   const getCanonicalTextLeaves = (root: ParentNode): Element[] =>
@@ -599,6 +673,43 @@
         (child) => normalizeVisibleText(child.textContent ?? '') === text
       );
     });
+
+  const isGeneratedSourceId = (sourceId: string): boolean =>
+    /^(?:visual|text|foreignObject|line|path)-\d+$/i.test(sourceId);
+
+  function annotateEditableTextTargets(graph: SVGSVGElement, sourceCode: string): void {
+    if (getDiagramKeyword(sourceCode) === 'sankey-beta') {
+      for (const labels of graph.querySelectorAll<SVGGElement>('g.node-labels')) {
+        labels.parentElement?.append(labels);
+      }
+    }
+    const occurrences = new SvelteMap<string, number>();
+    for (const leaf of getCanonicalTextLeaves(graph)) {
+      leaf.removeAttribute('data-editable-source-start');
+      leaf.removeAttribute('data-editable-source-end');
+      leaf.removeAttribute('data-editable-source-label');
+
+      const displayText = normalizeVisibleText(leaf.textContent ?? '');
+      const label = getEditableVisualLabel(sourceCode, displayText);
+      if (!label) continue;
+      const renderedSourceId = getVisualSourceId(leaf);
+      const sourceId = isGeneratedSourceId(renderedSourceId) ? '' : renderedSourceId;
+      const occurrenceKey = `${sourceId}\u0000${label.toLocaleLowerCase()}`;
+      const occurrence = occurrences.get(occurrenceKey) ?? 0;
+      occurrences.set(occurrenceKey, occurrence + 1);
+      const range =
+        findRequirementFieldRange(sourceCode, displayText, sourceId) ??
+        findVisualTextRange(sourceCode, {
+          occurrence,
+          sourceId: sourceId || undefined,
+          text: label
+        });
+      if (!range) continue;
+      leaf.setAttribute('data-editable-source-start', String(range.start));
+      leaf.setAttribute('data-editable-source-end', String(range.end));
+      leaf.setAttribute('data-editable-source-label', label);
+    }
+  }
 
   const getTextOccurrence = (
     target: EventTarget | null,
@@ -619,9 +730,15 @@
           (item === selected || selected.contains(item) || item.contains(selected)) &&
           normalizeVisibleText(item.textContent ?? '') === label
       ) ?? selected;
-    return labels
-      .slice(0, Math.max(labels.indexOf(canonicalSelected), 0))
-      .filter((item) => normalizeVisibleText(item.textContent ?? '') === label).length;
+    const renderedSourceId = getVisualSourceId(canonicalSelected);
+    const sourceId = isGeneratedSourceId(renderedSourceId) ? '' : renderedSourceId;
+    return labels.slice(0, Math.max(labels.indexOf(canonicalSelected), 0)).filter((item) => {
+      if (getEditableVisualLabel(validatedState.current.code, item.textContent ?? '') !== label) {
+        return false;
+      }
+      if (!sourceId) return true;
+      return getVisualSourceId(item) === sourceId;
+    }).length;
   };
 
   const isFlowchartState = (): boolean =>
@@ -705,30 +822,33 @@
 
   const addBranch = (event: MouseEvent) => {
     event.stopPropagation();
+    const selectedVisualElementId = visualSelection.current?.id ?? '';
+    if (validatedState.current.visualElements?.[selectedVisualElementId]) {
+      if (addVisualElementBranch(selectedVisualElementId)) branchTarget = undefined;
+      return;
+    }
     if (!branchTarget) {
       return;
     }
-    const baseline = captureBranchFocusBaseline();
-    const didAdd = addDiagramBranch({
-      label: branchTarget.label,
-      mode: currentDiagramKeyword() === 'kanban' ? 'card' : 'branch',
-      sourceId: branchTarget.sourceId
-    });
-    if (didAdd) pendingBranchFocusBaseline = baseline;
-    branchTarget = undefined;
+    const didAdd = validatedState.current.visualElements?.[branchTarget.sourceId]
+      ? addVisualElementBranch(branchTarget.sourceId)
+      : addFocusedDiagramBranch({
+          label: branchTarget.label,
+          mode: currentDiagramKeyword() === 'kanban' ? 'card' : 'branch',
+          sourceId: branchTarget.sourceId
+        });
+    if (didAdd) branchTarget = undefined;
   };
 
   const addSpecialBranch = (event: MouseEvent, mode: NonNullable<DiagramBranchRequest['mode']>) => {
     event.stopPropagation();
     if (!branchTarget) return;
-    const baseline = captureBranchFocusBaseline();
-    const didAdd = addDiagramBranch({
+    const didAdd = addFocusedDiagramBranch({
       label: branchTarget.label,
       mode,
       sourceId: branchTarget.sourceId
     });
-    if (didAdd) pendingBranchFocusBaseline = baseline;
-    branchTarget = undefined;
+    if (didAdd) branchTarget = undefined;
   };
 
   const editSelectedLabel = (event: MouseEvent) => {
@@ -740,7 +860,7 @@
       return;
     }
     openInlineTextEdit({
-      code: validatedState.current.code,
+      code,
       currentText: branchTarget.label,
       height: 36,
       originalText: branchTarget.label,
@@ -758,6 +878,19 @@
     setTimeout(() => {
       if (activeTextEdit && activeTextEditRevision === revision) activeTextEditReady = true;
     }, 0);
+  };
+
+  const clientRectInView = (rect: DOMRect): DOMRect => {
+    if (!view) return rect;
+    const viewRect = view.getBoundingClientRect();
+    const scaleX = view.clientWidth > 0 ? viewRect.width / view.clientWidth : 1;
+    const scaleY = view.clientHeight > 0 ? viewRect.height / view.clientHeight : 1;
+    return new DOMRect(
+      (rect.left - viewRect.left) / Math.max(scaleX, Number.EPSILON) + view.scrollLeft,
+      (rect.top - viewRect.top) / Math.max(scaleY, Number.EPSILON) + view.scrollTop,
+      rect.width / Math.max(scaleX, Number.EPSILON),
+      rect.height / Math.max(scaleY, Number.EPSILON)
+    );
   };
 
   const focusInlineTextInput = (node: HTMLInputElement) => {
@@ -800,7 +933,12 @@
 
   const deleteSelection = (event: MouseEvent) => {
     event.stopPropagation();
-    if (visualSelection.count > 1) {
+    const selectedId = visualSelection.current?.id ?? '';
+    const isIndependentVisualItem = Boolean(
+      validatedState.current.visualElements?.[selectedId] ||
+      validatedState.current.visualConnections?.[selectedId]
+    );
+    if (visualSelection.count > 1 || isIndependentVisualItem) {
       deleteSelectedElements();
       branchTarget = undefined;
       colorTarget = undefined;
@@ -1593,6 +1731,7 @@
     cancelPointDrag();
     cancelConnectionEndpointDrag();
     cancelArchitectureGroupInteraction();
+    cancelVisualElementResize();
     cancelBlockDrag();
     cancelStructuralDrag();
     cancelMarquee();
@@ -1612,12 +1751,154 @@
     return { bottom, height: bottom - top, left, right, top, width: right - left };
   };
 
+  const startVisualElementResize = (event: PointerEvent): void => {
+    if (!isPrimaryDragStart(event) || activeTextEdit || isMobilePanMode()) return;
+    const handle =
+      event.target instanceof Element
+        ? event.target.closest<SVGCircleElement>('[data-visual-element-resize]')
+        : undefined;
+    const group = handle?.closest<SVGGElement>('[data-visual-element]');
+    const id = group?.dataset.visualId ?? '';
+    const element = validatedState.current.visualElements?.[id];
+    const svg = group?.ownerSVGElement;
+    const start = svg ? clientToConnectionPoint(svg, event.clientX, event.clientY) : undefined;
+    if (!handle || !group || !element || !svg || !start) return;
+    if (validatedState.current.visualLayers?.[id]?.locked) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    panZoomState.suspendInteraction();
+    try {
+      container?.setPointerCapture(event.pointerId);
+    } catch {
+      // Synthetic pointer sources may not expose capture.
+    }
+    visualElementResize = {
+      current: element,
+      element: group,
+      handle: handle.dataset.visualElementResize ?? 'bottom-right',
+      initial: element,
+      ...(() => {
+        const minimum = visualElementSizeFromScreen(
+          svg,
+          VISUAL_ELEMENT_MIN_SCREEN_WIDTH,
+          VISUAL_ELEMENT_MIN_SCREEN_HEIGHT
+        );
+        return { minHeight: minimum.height, minWidth: minimum.width };
+      })(),
+      pointerId: event.pointerId,
+      position: validatedState.current.visualPositions?.[id] ?? { x: 0, y: 0 },
+      start,
+      started: false,
+      svg
+    };
+  };
+
+  const updateVisualElementResize = (event: PointerEvent): void => {
+    if (!visualElementResize || event.pointerId !== visualElementResize.pointerId) return;
+    const point = clientToConnectionPoint(visualElementResize.svg, event.clientX, event.clientY);
+    if (!point) return;
+    const delta = {
+      x: point.x - visualElementResize.start.x,
+      y: point.y - visualElementResize.start.y
+    };
+    if (!visualElementResize.started && Math.hypot(delta.x, delta.y) < 3) return;
+    event.preventDefault();
+    const { handle, initial } = visualElementResize;
+    const fromLeft = handle.includes('left');
+    const fromRight = handle.includes('right');
+    const fromTop = handle.includes('top');
+    const fromBottom = handle.includes('bottom');
+    const width = Math.max(
+      visualElementResize.minWidth,
+      initial.width + (fromRight ? delta.x : fromLeft ? -delta.x : 0)
+    );
+    const height = Math.max(
+      visualElementResize.minHeight,
+      initial.height + (fromBottom ? delta.y : fromTop ? -delta.y : 0)
+    );
+    const current: VisualElement = {
+      ...initial,
+      height,
+      width,
+      x: fromLeft ? initial.x + initial.width - width : initial.x,
+      y: fromTop ? initial.y + initial.height - height : initial.y
+    };
+    const replacement = updateRenderedVisualElement(
+      visualElementResize.element,
+      current,
+      visualElementResize.position,
+      true
+    );
+    const documentItem = visualDocument.current.find(({ id }) => id === current.id);
+    if (documentItem) documentItem.element = replacement;
+    visualElementResize = {
+      ...visualElementResize,
+      current,
+      element: replacement,
+      started: true
+    };
+    refreshVisualConnectionsForElements(
+      visualElementResize.svg,
+      validatedState.current.visualConnections,
+      connectionItems(),
+      new Set([current.id])
+    );
+    applyVisualStyles(visualElementResize.svg, validatedState.current.visualStyles);
+  };
+
+  const finishVisualElementResize = (event: PointerEvent): void => {
+    if (!visualElementResize || event.pointerId !== visualElementResize.pointerId) return;
+    const resize = visualElementResize;
+    visualElementResize = undefined;
+    panZoomState.resumeInteraction();
+    try {
+      container?.releasePointerCapture(event.pointerId);
+    } catch {
+      // The browser may already have released the pointer.
+    }
+    if (!resize.started) return;
+    event.preventDefault();
+    event.stopPropagation();
+    updateVisualElement(resize.current);
+  };
+
+  const cancelVisualElementResize = (event?: PointerEvent): void => {
+    if (event && visualElementResize && event.pointerId !== visualElementResize.pointerId) {
+      return;
+    }
+    const resize = visualElementResize;
+    visualElementResize = undefined;
+    panZoomState.resumeInteraction();
+    if (!resize) return;
+    const replacement = updateRenderedVisualElement(
+      resize.element,
+      resize.initial,
+      resize.position,
+      true
+    );
+    const documentItem = visualDocument.current.find(({ id }) => id === resize.initial.id);
+    if (documentItem) documentItem.element = replacement;
+    refreshVisualConnectionsForElements(
+      resize.svg,
+      validatedState.current.visualConnections,
+      connectionItems(),
+      new Set([resize.initial.id])
+    );
+  };
+
+  const cancelVisualElementResizeOnBlur = (): void => cancelVisualElementResize();
+
   const startFreeLayoutDrag = (
     event: PointerEvent | MouseEvent,
     kind: FreeLayoutKind,
     getNodeId: (target: EventTarget | null) => string
   ) => {
-    if (isMobilePanMode() || !isPrimaryDragStart(event)) return;
+    if (
+      isMobilePanMode() ||
+      !isPrimaryDragStart(event) ||
+      ('pointerType' in event && event.pointerType === 'touch' && activeTouchPointers.size > 1)
+    )
+      return;
     const id =
       getNodeId(event.target) ||
       ('clientX' in event
@@ -1628,7 +1909,11 @@
         : '') ||
       '';
     const svg = container?.querySelector<SVGSVGElement>('svg');
-    const pointerStart = svg ? clientToSvgPoint(svg, event.clientX, event.clientY) : undefined;
+    const pointerStart = svg
+      ? kind === 'overlay'
+        ? clientToConnectionPoint(svg, event.clientX, event.clientY)
+        : clientToSvgPoint(svg, event.clientX, event.clientY)
+      : undefined;
     if (!id || !svg || !pointerStart) return;
     if (validatedState.current.visualLayers?.[id]?.locked) return;
     const documentItem =
@@ -1652,6 +1937,8 @@
     );
     const movableItems = group.length > 0 ? group : documentItem ? [documentItem] : [];
     if (movableItems.length === 0) return;
+    const captureTarget =
+      documentItem?.element ?? (event.target instanceof Element ? event.target : container);
     const initial = Object.fromEntries(
       movableItems.map((item) => [
         item.id,
@@ -1667,11 +1954,24 @@
           !validatedState.current.visualLayers?.[item.id]?.hidden
       )
       .map(({ element }) => clientBoundsOf([element]));
-    // Claim module gestures before svg-pan-zoom can interpret them as canvas panning.
-    event.stopPropagation();
+    // Touch has no follow-up mousedown for the canvas guard below, so claim it here.
+    // Keeping mouse pointerdown cancellable preserves native click/dblclick text editing.
+    if ('pointerType' in event && event.pointerType === 'touch') {
+      if (event.cancelable) event.preventDefault();
+      event.stopImmediatePropagation();
+    }
     panZoomState.suspendInteraction();
     const pointerId = 'pointerId' in event ? event.pointerId : undefined;
+    const pointerType = 'pointerType' in event ? event.pointerType : 'mouse';
+    if (pointerType === 'touch' && pointerId !== undefined && captureTarget?.setPointerCapture) {
+      try {
+        captureTarget.setPointerCapture(pointerId);
+      } catch {
+        // Synthetic pointer sources may not expose a capturable pointer.
+      }
+    }
     blockDrag = {
+      captureTarget,
       current: initial,
       id,
       initial,
@@ -1681,7 +1981,7 @@
       pointerClientStart: { x: event.clientX, y: event.clientY },
       pointerId,
       pointerStart,
-      pointerType: 'pointerType' in event ? event.pointerType : 'mouse',
+      pointerType,
       started: false,
       svg
     };
@@ -1702,6 +2002,16 @@
     startFreeLayoutDrag(event, 'architecture', getArchitectureNodeId);
   };
 
+  const startVisualElementDrag = (event: PointerEvent | MouseEvent) => {
+    if (
+      activeTextEdit ||
+      (event.target instanceof Element && event.target.closest('[data-visual-element-resize]'))
+    ) {
+      return;
+    }
+    startFreeLayoutDrag(event, 'overlay', getVisualElementId);
+  };
+
   const stopCanvasGestureFromInteractiveNode = (event: MouseEvent) => {
     if (isMobilePanMode() || !isInteractiveCanvasTarget(event.target)) return;
     event.stopPropagation();
@@ -1715,27 +2025,59 @@
     };
     const viewBounds = view?.getBoundingClientRect();
     const keepVisible = blockDrag.pointerType === 'touch' ? 44 : 24;
+    const keepOverlayInsideX = Boolean(
+      blockDrag.kind === 'overlay' &&
+      viewBounds &&
+      blockDrag.initialBounds.left >= viewBounds.left + keepVisible &&
+      blockDrag.initialBounds.right <= viewBounds.right - keepVisible
+    );
+    const keepOverlayInsideY = Boolean(
+      blockDrag.kind === 'overlay' &&
+      viewBounds &&
+      blockDrag.initialBounds.top >= viewBounds.top + keepVisible &&
+      blockDrag.initialBounds.bottom <= viewBounds.bottom - keepVisible
+    );
     const rawClientDelta = viewBounds
       ? {
           x: Math.min(
             Math.max(
               requestedClientDelta.x,
-              viewBounds.left + keepVisible - blockDrag.initialBounds.right
+              keepOverlayInsideX
+                ? viewBounds.left + keepVisible - blockDrag.initialBounds.left
+                : viewBounds.left + keepVisible - blockDrag.initialBounds.right
             ),
-            viewBounds.right - keepVisible - blockDrag.initialBounds.left
+            keepOverlayInsideX
+              ? viewBounds.right - keepVisible - blockDrag.initialBounds.right
+              : viewBounds.right - keepVisible - blockDrag.initialBounds.left
           ),
           y: Math.min(
             Math.max(
               requestedClientDelta.y,
-              viewBounds.top + keepVisible - blockDrag.initialBounds.bottom
+              keepOverlayInsideY
+                ? viewBounds.top + keepVisible - blockDrag.initialBounds.top
+                : viewBounds.top + keepVisible - blockDrag.initialBounds.bottom
             ),
-            viewBounds.bottom - keepVisible - blockDrag.initialBounds.top
+            keepOverlayInsideY
+              ? viewBounds.bottom - keepVisible - blockDrag.initialBounds.bottom
+              : viewBounds.bottom - keepVisible - blockDrag.initialBounds.top
           )
         }
       : requestedClientDelta;
-    const dragThreshold = blockDrag.pointerType === 'touch' ? 8 : 4;
+    const dragThreshold = blockDrag.pointerType === 'touch' ? 5 : 4;
     if (!blockDrag.started && Math.hypot(rawClientDelta.x, rawClientDelta.y) < dragThreshold)
       return;
+    if (
+      !blockDrag.started &&
+      blockDrag.pointerType !== 'touch' &&
+      blockDrag.pointerId !== undefined &&
+      blockDrag.captureTarget?.setPointerCapture
+    ) {
+      try {
+        blockDrag.captureTarget.setPointerCapture(blockDrag.pointerId);
+      } catch {
+        // Synthetic pointer sources may not expose a capturable pointer.
+      }
+    }
     const snap = calculateSnap({
       deltaX: rawClientDelta.x,
       deltaY: rawClientDelta.y,
@@ -1745,20 +2087,20 @@
       snapToGrid: Boolean(validatedState.current.grid && validatedState.current.snapToGrid),
       threshold: 8
     });
-    const point = clientToSvgPoint(
-      blockDrag.svg,
-      blockDrag.pointerClientStart.x + snap.deltaX,
-      blockDrag.pointerClientStart.y + snap.deltaY
-    );
+    const point =
+      blockDrag.kind === 'overlay'
+        ? clientToConnectionPoint(
+            blockDrag.svg,
+            blockDrag.pointerClientStart.x + snap.deltaX,
+            blockDrag.pointerClientStart.y + snap.deltaY
+          )
+        : clientToSvgPoint(
+            blockDrag.svg,
+            blockDrag.pointerClientStart.x + snap.deltaX,
+            blockDrag.pointerClientStart.y + snap.deltaY
+          );
     if (!point) return;
     const delta = { x: point.x - blockDrag.pointerStart.x, y: point.y - blockDrag.pointerStart.y };
-    if (!blockDrag.started && blockDrag.pointerId !== undefined && container?.setPointerCapture) {
-      try {
-        container.setPointerCapture(blockDrag.pointerId);
-      } catch {
-        // Some synthetic pointer sources do not expose a capturable pointer.
-      }
-    }
     event.preventDefault();
     event.stopPropagation();
     const current = Object.fromEntries(
@@ -1771,7 +2113,13 @@
     const movedEntries = Object.entries(current);
     if (movedEntries.length === 1) {
       const [movedId, position] = movedEntries[0];
-      if (blockDrag.kind === 'block') {
+      if (blockDrag.kind === 'overlay') {
+        applyVisualElementPositions(
+          blockDrag.svg,
+          validatedState.current.visualElements,
+          nextPositions
+        );
+      } else if (blockDrag.kind === 'block') {
         moveBlockNode(blockDrag.svg, validatedState.current.code, movedId, position);
       } else if (blockDrag.kind === 'c4') {
         moveC4Node(blockDrag.svg, validatedState.current.code, movedId, position);
@@ -1784,6 +2132,12 @@
           validatedState.current.visualPositions
         );
       }
+    } else if (blockDrag.kind === 'overlay') {
+      applyVisualElementPositions(
+        blockDrag.svg,
+        validatedState.current.visualElements,
+        nextPositions
+      );
     } else if (blockDrag.kind === 'block') {
       applyBlockPositions(blockDrag.svg, validatedState.current.code, nextPositions);
     } else if (blockDrag.kind === 'c4') {
@@ -1808,10 +2162,11 @@
     blockDrag = { ...blockDrag, current, started: true };
   };
 
-  const releaseBlockPointer = (pointerId?: number) => {
-    if (pointerId === undefined || !container?.hasPointerCapture?.(pointerId)) return;
+  const releaseBlockPointer = (pointerId?: number, captureTarget?: Element) => {
+    const target = captureTarget ?? container;
+    if (pointerId === undefined || !target?.hasPointerCapture?.(pointerId)) return;
     try {
-      container.releasePointerCapture(pointerId);
+      target.releasePointerCapture(pointerId);
     } catch {
       // The browser may already have released it while ending the gesture.
     }
@@ -1829,7 +2184,7 @@
     const drag = blockDrag;
     blockDrag = undefined;
     snapGuides = [];
-    releaseBlockPointer(drag.pointerId);
+    releaseBlockPointer(drag.pointerId, drag.captureTarget);
     panZoomState.resumeInteraction();
     if (!drag.started) return;
     if (event.cancelable) event.preventDefault();
@@ -1871,8 +2226,14 @@
         cancelAnimationFrame(linkedConnectionRenderFrame);
         linkedConnectionRenderFrame = 0;
       }
-      releaseBlockPointer(blockDrag.pointerId);
-      if (blockDrag.kind === 'block') {
+      releaseBlockPointer(blockDrag.pointerId, blockDrag.captureTarget);
+      if (blockDrag.kind === 'overlay') {
+        applyVisualElementPositions(
+          blockDrag.svg,
+          validatedState.current.visualElements,
+          validatedState.current.visualPositions
+        );
+      } else if (blockDrag.kind === 'block') {
         applyBlockPositions(
           blockDrag.svg,
           validatedState.current.code,
@@ -2076,7 +2437,7 @@
   };
 
   const getInlineTextEditRange = (text: string, sourceId: string, occurrence: number) =>
-    findVisualTextRange(validatedState.current.code, {
+    findVisualTextRange(code, {
       occurrence,
       sourceId: sourceId || undefined,
       text
@@ -2094,35 +2455,61 @@
     ) {
       return;
     }
-    const textElement = getEditableTextElement(target);
-    const text = getEditableLabel(target, point);
+    const visualElementId = getVisualElementId(target);
+    const visualElement = visualElementId
+      ? validatedState.current.visualElements?.[visualElementId]
+      : undefined;
+    const visualElementGroup =
+      target instanceof Element ? target.closest<SVGGElement>('[data-visual-element]') : undefined;
+    const sourceLeaf = getTextLeafElement(target, point);
+    const textElement = visualElement
+      ? (visualElementGroup?.querySelector<Element>('[data-visual-element-label]') ?? undefined)
+      : getEditableTextElement(target);
+    const text =
+      visualElement?.label ||
+      sourceLeaf?.getAttribute('data-editable-source-label') ||
+      getEditableLabel(target, point);
     if (!view || !textElement || !text) {
       activeTextEdit = undefined;
       return;
     }
 
-    const sourceId = getVisualSourceId(target);
+    const sourceId = visualElementId || getVisualSourceId(target);
     const occurrence = getTextOccurrence(target, text, point);
-    const displayText = normalizeVisibleText(getTextLeafElement(target, point)?.textContent ?? '');
-    const range =
-      findRequirementFieldRange(validatedState.current.code, displayText, sourceId) ??
-      getInlineTextEditRange(text, sourceId, occurrence);
-    if (!range) {
+    const displayText = normalizeVisibleText(sourceLeaf?.textContent ?? '');
+    const annotatedStart = Number(sourceLeaf?.getAttribute('data-editable-source-start'));
+    const annotatedEnd = Number(sourceLeaf?.getAttribute('data-editable-source-end'));
+    const annotatedRange =
+      Number.isInteger(annotatedStart) &&
+      Number.isInteger(annotatedEnd) &&
+      annotatedStart >= 0 &&
+      annotatedEnd > annotatedStart &&
+      annotatedEnd <= code.length
+        ? { start: annotatedStart, end: annotatedEnd }
+        : undefined;
+    const range = visualElement
+      ? undefined
+      : (annotatedRange ??
+        findRequirementFieldRange(code, displayText, sourceId) ??
+        getInlineTextEditRange(text, sourceId, occurrence));
+    if (!range && !visualElement) {
       requestEditorFocus(text, sourceId || undefined, occurrence);
       return;
     }
 
-    const textRect = textElement.getBoundingClientRect();
-    const viewRect = view.getBoundingClientRect();
+    const textRect = clientRectInView(textElement.getBoundingClientRect());
+    const viewWidth = Math.max(view.clientWidth, 200);
+    const viewHeight = Math.max(view.clientHeight, 80);
     openInlineTextEdit({
-      code: validatedState.current.code,
+      code,
       currentText: text,
       height: Math.max(34, textRect.height + 14),
       originalText: text,
       range,
+      ...(visualElement ? { visualElementId } : {}),
       width: Math.max(160, textRect.width + 36),
-      x: Math.min(Math.max(textRect.left - viewRect.left - 12, 8), viewRect.width - 180),
-      y: Math.min(Math.max(textRect.top - viewRect.top - 8, 8), viewRect.height - 44)
+      x: Math.min(Math.max(textRect.left - 12, 8), viewWidth - 180),
+      y: Math.min(Math.max(textRect.top - 8, 8), viewHeight - 44)
     });
   };
 
@@ -2142,13 +2529,23 @@
 
   const finishInlineTextEdit = () => {
     if (activeTextEdit && activeTextEdit.currentText !== activeTextEdit.originalText) {
-      const next = replaceDiagramVisualText(
-        activeTextEdit.code,
-        activeTextEdit.range,
-        activeTextEdit.originalText,
-        activeTextEdit.currentText
-      );
-      updateCodeInteraction(next.code, { start: true, updateDiagram: true });
+      const visualElement = activeTextEdit.visualElementId
+        ? validatedState.current.visualElements?.[activeTextEdit.visualElementId]
+        : undefined;
+      if (visualElement) {
+        updateVisualElement({
+          ...visualElement,
+          label: activeTextEdit.currentText.trim() || '未命名'
+        });
+      } else if (activeTextEdit.range) {
+        const next = replaceDiagramVisualText(
+          activeTextEdit.code,
+          activeTextEdit.range,
+          activeTextEdit.originalText,
+          activeTextEdit.currentText
+        );
+        updateCodeInteraction(next.code, { start: true, updateDiagram: true });
+      }
     }
     activeTextEditReady = false;
     activeTextEditRevision += 1;
@@ -2204,7 +2601,10 @@
     const documentTarget =
       getVisualDocumentTarget(event.target, visualDocument.current) ?? connectionTarget;
     const styleTarget = getStyleTarget(event.target);
-    const text = getEditableLabel(event.target, event);
+    const visualElementId = getVisualElementId(event.target);
+    const text =
+      (visualElementId ? validatedState.current.visualElements?.[visualElementId]?.label : '') ||
+      getEditableLabel(event.target, event);
     const sourceId = documentTarget?.sourceId ?? getVisualSourceId(event.target);
     const occurrence = getTextOccurrence(event.target, text, event);
     const styleId = documentTarget?.styleId ?? (styleTarget ? getStyleID(styleTarget) : '');
@@ -2302,6 +2702,7 @@
 
   const handleStateChange = async (state: ValidatedState) => {
     const startTime = Date.now();
+    const nextRenderKey = diagramRenderKey(state);
     if (state.error !== undefined) {
       error = true;
       return;
@@ -2315,6 +2716,7 @@
         const nextVisualPositionsFingerprint = JSON.stringify(state.visualPositions ?? {});
         const nextVisualLayersFingerprint = JSON.stringify(state.visualLayers ?? {});
         const nextVisualConnectionsFingerprint = JSON.stringify(state.visualConnections ?? {});
+        const nextVisualElementsFingerprint = JSON.stringify(state.visualElements ?? {});
         // Do not render if there is no change in Code/Config/PanZoom
         if (
           code === state.code &&
@@ -2324,7 +2726,8 @@
           visualStylesFingerprint === nextVisualStylesFingerprint &&
           visualPositionsFingerprint === nextVisualPositionsFingerprint &&
           visualLayersFingerprint === nextVisualLayersFingerprint &&
-          visualConnectionsFingerprint === nextVisualConnectionsFingerprint
+          visualConnectionsFingerprint === nextVisualConnectionsFingerprint &&
+          visualElementsFingerprint === nextVisualElementsFingerprint
         ) {
           return;
         }
@@ -2339,7 +2742,6 @@
           colorTarget = undefined;
           deleteTarget = undefined;
           blockArrowSourceLabel = '';
-          if (connectionEditor.isCreating) finishConnectionCreation();
           connectionDraftSource = undefined;
           connectionPreview = undefined;
           connectionCreationGeometry = undefined;
@@ -2354,6 +2756,7 @@
         const visualLayersChanged = visualLayersFingerprint !== nextVisualLayersFingerprint;
         const visualConnectionsChanged =
           visualConnectionsFingerprint !== nextVisualConnectionsFingerprint;
+        const visualElementsChanged = visualElementsFingerprint !== nextVisualElementsFingerprint;
         const mustClearVisualStyles =
           visualStylesChanged && Object.keys(state.visualStyles ?? {}).length === 0;
 
@@ -2365,7 +2768,8 @@
           ((visualStylesChanged && !mustClearVisualStyles) ||
             visualPositionsFingerprint !== nextVisualPositionsFingerprint ||
             visualLayersChanged ||
-            visualConnectionsChanged)
+            visualConnectionsChanged ||
+            visualElementsChanged)
         ) {
           const graphDiv = container.querySelector<SVGSVGElement>('svg');
           if (graphDiv) {
@@ -2379,11 +2783,13 @@
             }
             refreshVisualDocument(graphDiv, state);
             applyVisualStyles(graphDiv, state.visualStyles);
+            markRenderedState(nextRenderKey);
           }
           visualStylesFingerprint = nextVisualStylesFingerprint;
           visualPositionsFingerprint = nextVisualPositionsFingerprint;
           visualLayersFingerprint = nextVisualLayersFingerprint;
           visualConnectionsFingerprint = nextVisualConnectionsFingerprint;
+          visualElementsFingerprint = nextVisualElementsFingerprint;
           return;
         }
 
@@ -2391,6 +2797,8 @@
           return;
         }
 
+        cancelRenderIdle();
+        renderBusy = true;
         code = state.code;
         config = state.mermaid;
         rough = state.rough;
@@ -2399,6 +2807,7 @@
         visualPositionsFingerprint = nextVisualPositionsFingerprint;
         visualLayersFingerprint = nextVisualLayersFingerprint;
         visualConnectionsFingerprint = nextVisualConnectionsFingerprint;
+        visualElementsFingerprint = nextVisualElementsFingerprint;
 
         if (mayContainFontAwesome(code)) {
           await waitForFontAwesomeToLoad?.();
@@ -2407,12 +2816,18 @@
         const scroll = view?.parentElement?.scrollTop;
         delete container.dataset.processed;
         const viewID = uniqueID('graph-');
+        const previousDiagramType = renderedDiagramType;
         const {
           svg,
           bindFunctions,
           diagramType: detectedDiagramType
         } = await renderDiagram(JSON.parse(state.mermaid) as MermaidConfig, code, viewID);
         diagramType = detectedDiagramType;
+        renderedDiagramType = detectedDiagramType;
+        const shouldFitNewDiagram =
+          state.pan === undefined ||
+          state.zoom === undefined ||
+          previousDiagramType !== detectedDiagramType;
         if (svg.length > 0) {
           // eslint-disable-next-line svelte/no-dom-manipulating
           container.innerHTML = svg;
@@ -2442,7 +2857,7 @@
             }
           }
           if (state.panZoom) {
-            handlePanZoom(state, graphDiv);
+            handlePanZoom(state, graphDiv, shouldFitNewDiagram);
           }
           enableVisualTextFocus(graphDiv);
           prepareStyleTargets(graphDiv, state.code);
@@ -2455,11 +2870,14 @@
           }
           refreshVisualDocument(graphDiv, state);
           applyVisualStyles(graphDiv, state.visualStyles);
-          if (state.panZoom) schedulePostRenderViewportFit();
-          schedulePendingBranchFocus();
+          if (state.panZoom) schedulePostRenderViewportFit(shouldFitNewDiagram);
+          await schedulePendingBranchFocus();
         }
         if (view?.parentElement && scroll) {
           view.parentElement.scrollTop = scroll;
+        }
+        if (container.querySelector('svg')) {
+          markRenderedState(nextRenderKey);
         }
         error = false;
       } else if (manualUpdate) {
@@ -2472,6 +2890,9 @@
     const renderTime = Date.now() - startTime;
     saveStatistics({ code, diagramType, isRough: state.rough, renderTime });
     recordRenderTime(renderTime, () => {
+      // A delayed render request must not turn a newer, invalid editor draft
+      // into an explicit apply operation. Wait until validation has caught up.
+      if (validatedState.current.error || validatedState.current.code !== inputState.code) return;
       updateCodeStore({ updateDiagram: true });
     });
   };
@@ -2479,13 +2900,22 @@
   onMount(() => {
     setupPanZoomObserver();
     const containerElement = container;
+    const viewElement = view;
+    const visualViewport = window.visualViewport;
     const captureOptions = { capture: true };
+    viewportLandscape = window.matchMedia('(orientation: landscape)').matches;
+    const viewportObserver = new ResizeObserver(scheduleViewportResize);
+    if (viewElement) viewportObserver.observe(viewElement);
+    window.addEventListener('resize', scheduleViewportResize);
+    window.addEventListener('orientationchange', scheduleViewportResize);
+    visualViewport?.addEventListener('resize', scheduleViewportResize);
     containerElement?.addEventListener(
       'mousedown',
       stopCanvasGestureFromInteractiveNode,
       captureOptions
     );
     containerElement?.addEventListener('pointerdown', trackTouchPointerStart, captureOptions);
+    containerElement?.addEventListener('pointerdown', startVisualElementResize, captureOptions);
     containerElement?.addEventListener('pointerdown', startConnectionInteraction, captureOptions);
     containerElement?.addEventListener(
       'pointerdown',
@@ -2499,14 +2929,15 @@
     containerElement?.addEventListener('pointerdown', startBlockDrag, captureOptions);
     containerElement?.addEventListener('pointerdown', startC4Drag, captureOptions);
     containerElement?.addEventListener('pointerdown', startArchitectureDrag, captureOptions);
+    containerElement?.addEventListener('pointerdown', startVisualElementDrag, captureOptions);
     containerElement?.addEventListener('pointerdown', startStructuralDrag, captureOptions);
-    containerElement?.addEventListener('lostpointercapture', finishBlockDrag, captureOptions);
     window.addEventListener('pointermove', updateMoodDrag, captureOptions);
     window.addEventListener('pointermove', updateConnectionInteraction, captureOptions);
     window.addEventListener('pointermove', updateArchitectureGroupInteraction, captureOptions);
     window.addEventListener('pointermove', updateMarquee, captureOptions);
     window.addEventListener('pointermove', updateQuadrantDrag, captureOptions);
     window.addEventListener('pointermove', updateWardleyDrag, captureOptions);
+    window.addEventListener('pointermove', updateVisualElementResize, captureOptions);
     window.addEventListener('pointermove', updateBlockDrag, captureOptions);
     window.addEventListener('pointermove', updateStructuralDrag, captureOptions);
     window.addEventListener('pointerup', finishMoodDrag, captureOptions);
@@ -2516,6 +2947,7 @@
     window.addEventListener('pointerup', finishMarquee, captureOptions);
     window.addEventListener('pointerup', finishQuadrantDrag, captureOptions);
     window.addEventListener('pointerup', finishWardleyDrag, captureOptions);
+    window.addEventListener('pointerup', finishVisualElementResize, captureOptions);
     window.addEventListener('pointerup', finishBlockDrag, captureOptions);
     window.addEventListener('pointerup', finishStructuralDrag, captureOptions);
     window.addEventListener('pointercancel', cancelStructuralDrag, captureOptions);
@@ -2523,24 +2955,35 @@
     window.addEventListener('pointercancel', cancelConnectionEndpointDrag, captureOptions);
     window.addEventListener('pointercancel', cancelArchitectureGroupInteraction, captureOptions);
     window.addEventListener('pointercancel', cancelMarquee, captureOptions);
+    window.addEventListener('pointercancel', cancelVisualElementResize, captureOptions);
     window.addEventListener('pointercancel', cancelBlockDrag, captureOptions);
     window.addEventListener('pointercancel', cancelPointDrag, captureOptions);
     window.addEventListener('blur', cancelStructuralDrag);
     window.addEventListener('blur', cancelConnectionOnBlur);
     window.addEventListener('blur', cancelArchitectureGroupOnBlur);
     window.addEventListener('blur', cancelMarquee);
+    window.addEventListener('blur', cancelVisualElementResizeOnBlur);
     window.addEventListener('blur', cancelBlockDrag);
     window.addEventListener('blur', cancelPointDrag);
     containerElement?.addEventListener('click', handleVisualTextFocus, captureOptions);
     containerElement?.addEventListener('dblclick', handleVisualTextDoubleClick, captureOptions);
 
     return () => {
+      viewportObserver.disconnect();
+      window.removeEventListener('resize', scheduleViewportResize);
+      window.removeEventListener('orientationchange', scheduleViewportResize);
+      visualViewport?.removeEventListener('resize', scheduleViewportResize);
       containerElement?.removeEventListener(
         'mousedown',
         stopCanvasGestureFromInteractiveNode,
         captureOptions
       );
       containerElement?.removeEventListener('pointerdown', trackTouchPointerStart, captureOptions);
+      containerElement?.removeEventListener(
+        'pointerdown',
+        startVisualElementResize,
+        captureOptions
+      );
       containerElement?.removeEventListener(
         'pointerdown',
         startConnectionInteraction,
@@ -2558,14 +3001,15 @@
       containerElement?.removeEventListener('pointerdown', startBlockDrag, captureOptions);
       containerElement?.removeEventListener('pointerdown', startC4Drag, captureOptions);
       containerElement?.removeEventListener('pointerdown', startArchitectureDrag, captureOptions);
+      containerElement?.removeEventListener('pointerdown', startVisualElementDrag, captureOptions);
       containerElement?.removeEventListener('pointerdown', startStructuralDrag, captureOptions);
-      containerElement?.removeEventListener('lostpointercapture', finishBlockDrag, captureOptions);
       window.removeEventListener('pointermove', updateMoodDrag, captureOptions);
       window.removeEventListener('pointermove', updateConnectionInteraction, captureOptions);
       window.removeEventListener('pointermove', updateArchitectureGroupInteraction, captureOptions);
       window.removeEventListener('pointermove', updateMarquee, captureOptions);
       window.removeEventListener('pointermove', updateQuadrantDrag, captureOptions);
       window.removeEventListener('pointermove', updateWardleyDrag, captureOptions);
+      window.removeEventListener('pointermove', updateVisualElementResize, captureOptions);
       window.removeEventListener('pointermove', updateBlockDrag, captureOptions);
       window.removeEventListener('pointermove', updateStructuralDrag, captureOptions);
       window.removeEventListener('pointerup', finishMoodDrag, captureOptions);
@@ -2575,6 +3019,7 @@
       window.removeEventListener('pointerup', finishMarquee, captureOptions);
       window.removeEventListener('pointerup', finishQuadrantDrag, captureOptions);
       window.removeEventListener('pointerup', finishWardleyDrag, captureOptions);
+      window.removeEventListener('pointerup', finishVisualElementResize, captureOptions);
       window.removeEventListener('pointerup', finishBlockDrag, captureOptions);
       window.removeEventListener('pointerup', finishStructuralDrag, captureOptions);
       window.removeEventListener('pointercancel', cancelStructuralDrag, captureOptions);
@@ -2586,15 +3031,18 @@
         captureOptions
       );
       window.removeEventListener('pointercancel', cancelMarquee, captureOptions);
+      window.removeEventListener('pointercancel', cancelVisualElementResize, captureOptions);
       window.removeEventListener('pointercancel', cancelBlockDrag, captureOptions);
       window.removeEventListener('pointercancel', cancelPointDrag, captureOptions);
       window.removeEventListener('blur', cancelStructuralDrag);
       window.removeEventListener('blur', cancelConnectionOnBlur);
       window.removeEventListener('blur', cancelArchitectureGroupOnBlur);
       window.removeEventListener('blur', cancelMarquee);
+      window.removeEventListener('blur', cancelVisualElementResizeOnBlur);
       window.removeEventListener('blur', cancelBlockDrag);
       window.removeEventListener('blur', cancelPointDrag);
       cancelPointDrag();
+      cancelVisualElementResize();
       cancelBlockDrag();
       cancelStructuralDrag();
       cancelConnectionEndpointDrag();
@@ -2604,7 +3052,11 @@
       if (connectionRenderFrame) cancelAnimationFrame(connectionRenderFrame);
       if (linkedConnectionRenderFrame) cancelAnimationFrame(linkedConnectionRenderFrame);
       if (viewportFitFrame) cancelAnimationFrame(viewportFitFrame);
-      if (branchFocusFrame) cancelAnimationFrame(branchFocusFrame);
+      viewportFitForce = false;
+      if (viewportResizeFrame) cancelAnimationFrame(viewportResizeFrame);
+      cancelRenderIdle();
+      cancelBranchFocusFrame();
+      clearPendingBranchFocus();
       containerElement?.removeEventListener('click', handleVisualTextFocus, captureOptions);
       containerElement?.removeEventListener(
         'dblclick',
@@ -2638,7 +3090,9 @@
       .join('|');
     const hasEndpointHandles = Boolean(graph?.querySelector('[data-connection-endpoint]'));
     const shouldShowEndpointHandles = Boolean(nextSelectedConnectionsFingerprint);
-    if (graph && !shouldShowEndpointHandles && hasEndpointHandles) {
+    const shouldKeepConnectionAnchors =
+      connectionEditor.isCreating || Boolean(connectionEndpointDrag);
+    if (graph && !shouldShowEndpointHandles && !shouldKeepConnectionAnchors && hasEndpointHandles) {
       graph
         .querySelectorAll(
           '[data-connection-endpoint], [data-connection-endpoint-hit], [data-visual-connection-anchors]'
@@ -2696,10 +3150,22 @@
   // This prevents stale intermediate SVGs from replacing a user's latest input.
   let pendingRenderState: ValidatedState | undefined;
   let isDrainingRenderQueue = false;
+  const cancelRenderIdle = () => {
+    if (renderIdleFrame) cancelAnimationFrame(renderIdleFrame);
+    renderIdleFrame = 0;
+  };
+  const publishRenderIdle = () => {
+    cancelRenderIdle();
+    renderIdleFrame = requestAnimationFrame(() => {
+      renderIdleFrame = requestAnimationFrame(() => {
+        renderIdleFrame = 0;
+        if (!isDrainingRenderQueue && !pendingRenderState) renderBusy = false;
+      });
+    });
+  };
   const drainRenderQueue = async (): Promise<void> => {
     if (isDrainingRenderQueue) return;
     isDrainingRenderQueue = true;
-    renderBusy = true;
     try {
       while (pendingRenderState) {
         const state = pendingRenderState;
@@ -2712,14 +3178,17 @@
       }
     } finally {
       isDrainingRenderQueue = false;
-      renderBusy = false;
       if (pendingRenderState) void drainRenderQueue();
+      else if (renderBusy) publishRenderIdle();
     }
   };
 
   $effect(() => {
-    pendingRenderState = validatedState.current;
-    void drainRenderQueue();
+    const state = validatedState.current;
+    untrack(() => {
+      pendingRenderState = state;
+      void drainRenderQueue();
+    });
   });
 </script>
 
@@ -2741,9 +3210,12 @@
     bind:this={container}
     class={[
       'box-border h-full min-w-0 w-full',
-      isMobile ? 'touch-none overflow-hidden pt-8 pb-32' : 'overflow-auto py-14'
+      isMobile
+        ? 'touch-none overflow-hidden pt-8 pb-32 landscape:pt-3 landscape:pb-16'
+        : 'overflow-auto py-14'
     ]}>
   </div>
+  <SampleDescription {isMobile} />
   <ConnectionToolbar />
   {#if connectionEditor.isCreating}
     <div
@@ -2878,13 +3350,25 @@
       </div>
     {/if}
     {#if currentDiagramKeyword() === 'block-beta'}
-      <Button
-        class="diagram-special-button absolute z-20 shadow-lg"
-        style={`left: ${specialActionX(branchTarget.x)}px; top: ${specialToolbarY(branchTarget.y)}px;`}
-        title={`以“${branchTarget.label}”作为箭头起点`}
-        onclick={selectBlockArrowSource}>
-        箭头
-      </Button>
+      <div
+        class="diagram-special-button absolute z-20 flex gap-1 rounded-sm border border-border-dark bg-background p-1 shadow-lg"
+        style={`left: ${specialActionX(branchTarget.x, 156)}px; top: ${specialToolbarY(branchTarget.y)}px;`}>
+        <Button
+          class="h-8 px-2"
+          title={`给“${branchTarget.label}”添加不同形状的分支`}
+          onclick={(event) => {
+            event.stopPropagation();
+            openVisualElementPicker();
+          }}>
+          形状
+        </Button>
+        <Button
+          class="h-8 px-2"
+          title={`以“${branchTarget.label}”作为箭头起点`}
+          onclick={selectBlockArrowSource}>
+          箭头
+        </Button>
+      </div>
     {/if}
   {/if}
   {#if blockArrowSourceLabel}
@@ -2985,6 +3469,14 @@
   :global(.visual-element-selected) {
     outline: 3px solid color-mix(in srgb, var(--color-accent) 88%, white);
     outline-offset: 3px;
+  }
+
+  :global([data-visual-element-resize]) {
+    display: none;
+  }
+
+  :global(.visual-element-selected [data-visual-element-resize]) {
+    display: block;
   }
 
   :global(.visual-element-primary) {

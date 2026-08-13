@@ -5,13 +5,16 @@ import { parse } from './mermaid';
 import { serializeState } from './serde';
 import {
   addVisualConnection,
+  addVisualElement,
   createDiagramBranchCode,
   defaultState,
   deleteVisualConnections,
+  deleteVisualElements,
   inputState,
   loadDiagramTemplate,
   loadState,
   normalizeState,
+  persistenceState,
   replaceAllDiagramText,
   replaceInputState,
   loadDiagramCode,
@@ -20,6 +23,7 @@ import {
   toggleDarkTheme,
   updateCode,
   updateCodeStore,
+  updateSampleDescription,
   updateVisualLayer,
   updateVisualConnection,
   updateVisualPositions,
@@ -46,6 +50,24 @@ describe('saved state compatibility', () => {
     expect(validatedState.current.code).not.toContain('过期状态');
   });
 
+  it('keeps an invalid manual draft instead of silently rolling it back while the user pauses', async () => {
+    const validCode = 'flowchart LR\n  A[有效内容] --> B[终点]';
+    const invalidDraft = `${validCode}\n  C[尚未写完`;
+    loadDiagramCode(validCode);
+    await waitForStateValidation();
+
+    updateCode(invalidDraft);
+    await waitForStateValidation();
+    expect(validatedState.current.error).toBeDefined();
+    expect(inputState.code).toBe(invalidDraft);
+
+    await new Promise((resolve) => setTimeout(resolve, 1_300));
+    expect(inputState.code).toBe(invalidDraft);
+
+    loadDiagramCode(validCode);
+    await waitForStateValidation();
+  });
+
   it('fills fields missing from legacy saved data without replacing its diagram', () => {
     const normalized = normalizeState({ code: 'flowchart LR\n  Legacy[旧作品]' });
 
@@ -56,6 +78,7 @@ describe('saved state compatibility', () => {
     expect(normalized.rough).toBe(defaultState.rough);
     expect(normalized.updateDiagram).toBe(defaultState.updateDiagram);
     expect(normalized.editorMode).toBe('code');
+    expect(normalized.schemaVersion).toBe(1);
     expect(normalized.snapToGrid).toBe(true);
     expect(normalized.visualLayers).toBeUndefined();
   });
@@ -74,6 +97,12 @@ describe('saved state compatibility', () => {
     expect(normalized.pan).toBeUndefined();
     expect(normalized.zoom).toBeUndefined();
     expect(normalized.visualPositions?.A).toEqual({ x: 20, y: 30 });
+  });
+
+  it('clamps finite legacy zoom values to the supported viewport range', () => {
+    expect(normalizeState({ ...defaultState, zoom: -4 }).zoom).toBe(0.05);
+    expect(normalizeState({ ...defaultState, zoom: 200 }).zoom).toBe(12);
+    expect(normalizeState({ ...defaultState, zoom: 2.5 }).zoom).toBe(2.5);
   });
 
   it('sanitizes malformed legacy visual styles and positions', () => {
@@ -110,6 +139,31 @@ describe('saved state compatibility', () => {
       lineStyle: 'solid',
       strokeWidth: 2
     });
+  });
+
+  it('detaches imported arrows from missing overlay elements without deleting the arrow', () => {
+    const normalized = normalizeState({
+      ...defaultState,
+      visualConnections: {
+        'connection-orphan': {
+          direction: 'forward',
+          id: 'connection-orphan',
+          label: '仍可编辑',
+          lineStyle: 'solid',
+          source: {
+            anchor: 'right',
+            elementId: 'element-missing',
+            x: 10,
+            y: 20
+          },
+          strokeWidth: 2,
+          target: { x: 80, y: 20 }
+        }
+      }
+    });
+
+    expect(normalized.visualConnections?.['connection-orphan'].source).toEqual({ x: 10, y: 20 });
+    expect(normalized.visualConnections?.['connection-orphan'].label).toBe('仍可编辑');
   });
 
   it('does not leak optional fields from the current diagram into a legacy link', () => {
@@ -204,6 +258,97 @@ describe('update functions persist input state', () => {
     expect(inputState.visualConnections).toBeUndefined();
     expect(undoLastEdit()).toBe(true);
     expect(inputState.visualConnections?.[connection.id]?.label).toBe('调用');
+  });
+
+  it('stores editable visual elements and removes their connected arrows atomically', () => {
+    loadDiagramCode('block-beta\n  A["原始模块"]');
+    const element = {
+      height: 76,
+      id: 'element-test',
+      kind: 'shape' as const,
+      label: '菱形分支',
+      parentId: 'A',
+      shape: 'diamond' as const,
+      width: 132,
+      x: 180,
+      y: 40
+    };
+    const connection = createVisualConnection(
+      { anchor: 'right', elementId: 'A', x: 0, y: 0 },
+      { anchor: 'left', elementId: element.id, x: 0, y: 0 },
+      'connection-element-test'
+    );
+    expect(addVisualElement(element, connection)).toBe(true);
+    expect(inputState.visualElements?.[element.id]?.shape).toBe('diamond');
+    expect(inputState.visualConnections?.[connection.id]?.target.elementId).toBe(element.id);
+
+    expect(deleteVisualElements([element.id])).toBe(1);
+    expect(inputState.visualElements).toBeUndefined();
+    expect(inputState.visualConnections).toBeUndefined();
+    expect(undoLastEdit()).toBe(true);
+    expect(inputState.visualElements?.[element.id]?.label).toBe('菱形分支');
+    expect(inputState.visualConnections?.[connection.id]).toBeDefined();
+  });
+
+  it('deletes a visual parent, its descendants and every connected arrow as one undo step', () => {
+    loadDiagramCode('block-beta\n  A["原始模块"]');
+    const parent = {
+      height: 76,
+      id: 'element-parent',
+      kind: 'shape' as const,
+      label: '父模块',
+      parentId: 'A',
+      shape: 'rounded' as const,
+      width: 132,
+      x: 180,
+      y: 40
+    };
+    const child = {
+      ...parent,
+      id: 'element-child',
+      label: '子模块',
+      parentId: parent.id,
+      x: 340
+    };
+    const grandchild = {
+      ...parent,
+      id: 'element-grandchild',
+      label: '孙模块',
+      parentId: child.id,
+      x: 500
+    };
+    const connection = createVisualConnection(
+      { anchor: 'right', elementId: parent.id, x: 0, y: 0 },
+      { anchor: 'left', elementId: child.id, x: 0, y: 0 },
+      'connection-parent-child'
+    );
+
+    expect(addVisualElement(parent)).toBe(true);
+    expect(addVisualElement(child, connection)).toBe(true);
+    expect(addVisualElement(grandchild)).toBe(true);
+    expect(deleteVisualElements([parent.id])).toBe(3);
+    expect(inputState.visualElements).toBeUndefined();
+    expect(inputState.visualConnections).toBeUndefined();
+
+    expect(undoLastEdit()).toBe(true);
+    expect(Object.keys(inputState.visualElements ?? {})).toEqual([
+      parent.id,
+      child.id,
+      grandchild.id
+    ]);
+    expect(inputState.visualConnections?.[connection.id]).toBeDefined();
+  });
+
+  it('edits and deletes a sample description without changing the diagram', () => {
+    const code = 'flowchart LR\n  A[示例]';
+    loadDiagramTemplate({ code, sampleDescription: '原始说明' });
+    expect(updateSampleDescription('更新后的说明')).toBe(true);
+    expect(inputState.sampleDescription).toBe('更新后的说明');
+    expect(updateSampleDescription(undefined)).toBe(true);
+    expect(inputState.sampleDescription).toBeUndefined();
+    expect(inputState.code).toBe(code);
+    expect(undoLastEdit()).toBe(true);
+    expect(inputState.sampleDescription).toBe('原始说明');
   });
 
   it('stores block positions as one undoable and redoable interaction', () => {
@@ -317,6 +462,79 @@ describe('update functions persist input state', () => {
     expect(inputState.visualConnections?.[connection.id].label).toBe('旧关系');
   });
 
+  it('replaces source, arrow and free-element text in one undoable transaction', () => {
+    const code = 'flowchart LR\n  A[旧入口] --> B[目标]';
+    loadDiagramCode(code);
+    const element = {
+      height: 76,
+      id: 'element-replace',
+      kind: 'shape' as const,
+      label: '旧模块',
+      shape: 'rounded' as const,
+      width: 132,
+      x: 180,
+      y: 40
+    };
+    expect(addVisualElement(element)).toBe(true);
+    const sourceMatch = searchEditableSourceText(code, '旧', {
+      caseSensitive: false,
+      wholeWord: false
+    })[0];
+
+    expect(
+      replaceAllDiagramText([
+        { currentText: sourceMatch.text, nextText: '新', range: sourceMatch.range },
+        {
+          currentText: '旧',
+          nextText: '新',
+          range: { end: 1, start: 0 },
+          visualElementId: element.id
+        }
+      ])
+    ).toBe(2);
+    expect(inputState.code).toContain('新入口');
+    expect(inputState.visualElements?.[element.id].label).toBe('新模块');
+
+    expect(undoLastEdit()).toBe(true);
+    expect(inputState.code).toBe(code);
+    expect(inputState.visualElements?.[element.id].label).toBe('旧模块');
+  });
+
+  it('keeps an explicitly empty visual-element label across normalization', () => {
+    const normalized = normalizeState({
+      ...defaultState,
+      visualElements: {
+        'element-empty': {
+          height: 76,
+          id: 'element-empty',
+          kind: 'shape',
+          label: '',
+          shape: 'rectangle',
+          width: 132,
+          x: 0,
+          y: 0
+        }
+      }
+    });
+
+    expect(normalized.visualElements?.['element-empty'].label).toBe('');
+  });
+
+  it('does not create history or report replacements when text stays unchanged', () => {
+    const code = 'flowchart LR\n  A[保持原文] --> B[目标]';
+    loadDiagramCode(code);
+    const match = searchEditableSourceText(code, '保持', {
+      caseSensitive: false,
+      wholeWord: false
+    })[0];
+
+    expect(
+      replaceAllDiagramText([{ currentText: match.text, nextText: match.text, range: match.range }])
+    ).toBe(0);
+    expect(inputState.code).toBe(code);
+    expect(undoLastEdit()).toBe(false);
+  });
+
   it('normalizes reactive position objects before persistence', () => {
     loadDiagramCode('C4Context\n  System(app, "应用")');
     const positions = $state({ app: { x: 48, y: 32 } });
@@ -327,6 +545,26 @@ describe('update functions persist input state', () => {
   it('updateCode writes the new code to localStorage', () => {
     updateCode('graph TD\n persisted-by-test');
     expect(readStoredState().code).toBe('graph TD\n persisted-by-test');
+  });
+
+  it('reports a blocked code-store write and recovers on the next successful update', () => {
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('quota exceeded', 'QuotaExceededError');
+    });
+    updateCode('graph TD\n storage-blocked');
+    expect(persistenceState.hasWriteFailure).toBe(true);
+
+    setItem.mockRestore();
+    updateCode('graph TD\n storage-restored');
+    expect(persistenceState.lastWriteSucceeded).toBe(true);
+    expect(readStoredState().code).toContain('storage-restored');
+  });
+
+  it('keeps the current document when an invalid shared state is loaded', () => {
+    loadDiagramCode('flowchart LR\n  Current[当前作品]');
+    loadState('not-a-valid-state');
+
+    expect(inputState.code).toContain('Current[当前作品]');
   });
 
   it('keeps the viewport for same-type edits and resets it when the diagram type changes', () => {

@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { addManualEntry } from '$lib/components/History/historyState.svelte';
   import CommandPalette from '$lib/components/workspace/CommandPalette.svelte';
   import ArchitectureGroupToolbar from '$lib/components/workspace/ArchitectureGroupToolbar.svelte';
   import DiagramNotice from '$lib/components/workspace/DiagramNotice.svelte';
@@ -7,6 +6,7 @@
   import MobileMorePanel from '$lib/components/workspace/MobileMorePanel.svelte';
   import MobileSheet from '$lib/components/workspace/MobileSheet.svelte';
   import WorkspacePanelHost from '$lib/components/workspace/WorkspacePanelHost.svelte';
+  import VisualElementPicker from '$lib/components/workspace/VisualElementPicker.svelte';
   import ColorPickerPanel from '$lib/components/ColorPickerPanel.svelte';
   import {
     cancelConnectionCreation,
@@ -25,7 +25,6 @@
     openGlobalSearch,
     refreshGlobalSearch
   } from '$lib/util/globalSearch.svelte';
-  import { notify } from '$lib/util/notify';
   import {
     closeMobileWorkspaceSheet,
     mobileWorkspace,
@@ -37,10 +36,10 @@
   import {
     canRedoEdit,
     canUndoEdit,
-    inputState,
     redoLastEdit,
     resetToDefaultGraph,
     addArchitectureGroup,
+    persistenceState,
     setSnapToGrid,
     undoLastEdit,
     validatedState
@@ -69,6 +68,7 @@
     openWorkspacePanel,
     workspacePanels
   } from '$lib/util/workspacePanels.svelte';
+  import { saveCurrentWorkspaceWithFeedback } from '$lib/util/workspaceSave.svelte';
   import { onMount } from 'svelte';
 
   let {
@@ -81,8 +81,7 @@
     typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl';
 
   const saveCurrent = (): void => {
-    if (addManualEntry($state.snapshot(inputState))) notify('已保存当前图表版本。');
-    else notify('当前图表已经保存过了。');
+    void saveCurrentWorkspaceWithFeedback();
   };
 
   const openSearch = (): void => {
@@ -98,6 +97,11 @@
   const openCode = (): void => {
     closeGlobalSearch();
     openWorkspacePanel('code');
+  };
+
+  const openDiagrams = (): void => {
+    closeGlobalSearch();
+    openWorkspacePanel('diagrams');
   };
 
   const resetDiagram = (): void => {
@@ -154,6 +158,12 @@
         run: openCode
       },
       {
+        category: '视图',
+        id: 'diagrams',
+        label: '打开图表库',
+        run: openDiagrams
+      },
+      {
         category: '编辑',
         id: 'undo',
         isEnabled: () => canUndoEdit.current,
@@ -172,7 +182,7 @@
       {
         category: '编辑',
         id: 'save',
-        label: '保存当前版本',
+        label: '保存本机版本',
         run: saveCurrent,
         shortcut: `${modifier}+S`
       },
@@ -183,24 +193,6 @@
         label: '全选可管理元素',
         run: selectAllVisualElements,
         shortcut: `${modifier}+A`
-      },
-      {
-        category: '编辑',
-        disabledReason: () => '当前图表语法无法安全复制父子关系，请使用添加分支。',
-        id: 'copy',
-        isEnabled: () => false,
-        label: '复制所选元素',
-        run: () => undefined,
-        shortcut: `${modifier}+C`
-      },
-      {
-        category: '编辑',
-        disabledReason: () => '为避免生成重复 ID，粘贴将在统一节点模型完成后开放。',
-        id: 'paste',
-        isEnabled: () => false,
-        label: '粘贴元素',
-        run: () => undefined,
-        shortcut: `${modifier}+V`
       },
       {
         category: '编辑',
@@ -369,7 +361,15 @@
       const typing = isTextInput(event.target);
 
       if (key === 'escape') {
+        if (typing || event.defaultPrevented) return;
         escapeWorkspace();
+        return;
+      }
+      if (typing) {
+        if (modifierPressed && key === 's') {
+          event.preventDefault();
+          saveCurrent();
+        }
         return;
       }
       if (modifierPressed && key === 'k') {
@@ -388,7 +388,6 @@
         openSearch();
         return;
       }
-      if (typing) return;
 
       let handled = false;
       if (modifierPressed && key === 'z' && event.shiftKey) handled = redoLastEdit();
@@ -408,17 +407,28 @@
       if (handled) event.preventDefault();
     };
 
+    const handleBeforeUnload = (event: BeforeUnloadEvent): void => {
+      if (!persistenceState.hasWriteFailure) return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
+
     window.addEventListener('keydown', handleKeydown);
+    window.addEventListener('beforeunload', handleBeforeUnload);
     return () => {
       unregister();
       window.removeEventListener('keydown', handleKeydown);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
     };
   });
 
-  onMount(() => observeMobileViewport());
-
   $effect(() => {
     setMobileWorkspaceEnabled(isMobile);
+  });
+
+  $effect(() => {
+    if (!isMobile) return;
+    return observeMobileViewport();
   });
 
   $effect(() => {
@@ -428,7 +438,13 @@
   });
 
   $effect(() => {
-    if (globalSearch.isOpen) refreshGlobalSearch(validatedState.current.code);
+    if (globalSearch.isOpen) {
+      refreshGlobalSearch(
+        validatedState.current.code,
+        validatedState.current.visualConnections,
+        validatedState.current.visualElements
+      );
+    }
   });
 </script>
 
@@ -436,6 +452,7 @@
 <DiagramNotice />
 <ArchitectureGroupToolbar />
 <WorkspacePanelHost {isMobile} />
+<VisualElementPicker />
 {#if isMobile}
   <MobileEditToolbar />
   <MobileMorePanel {onOpenHistory} {panZoomState} />

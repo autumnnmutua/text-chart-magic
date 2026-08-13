@@ -16,6 +16,25 @@ export interface SourceTextRange {
 
 export const normalizeVisibleText = (value = '') => value.replace(/\s+/g, ' ').trim();
 
+export const getEditableVisualLabel = (code: string, displayText: string): string => {
+  const text = normalizeVisibleText(displayText);
+  const keyword = getDiagramKeyword(code);
+  if (keyword === 'requirementdiagram') {
+    const fieldText = text.replace(
+      /^(?:Text|ID|Risk|Verification(?: Method)?|Verify Method|Type|Doc(?:ument)? Ref(?:erence)?):\s*/i,
+      ''
+    );
+    return fieldText.match(/^<<\s*(.+?)\s*>>$/)?.[1] ?? fieldText;
+  }
+  if (keyword === 'pie') {
+    return text.replace(/\s*\[\s*-?\d+(?:\.\d+)?%?\s*\]\s*$/, '');
+  }
+  if (keyword === 'sankey-beta') {
+    return text.replace(/\s+-?\d+(?:\.\d+)?\s*$/, '');
+  }
+  return text;
+};
+
 const comparableVisibleText = (value = '') => normalizeVisibleText(value).toLocaleLowerCase();
 
 const requirementDeclarationKinds = [
@@ -135,6 +154,8 @@ const visibleTextPatterns = [
   /^\s*([^:\n]+?)\s*:\s*-?\d+(?:\.\d+)?\s*:\s*[^\n]+$/gm,
   /^\s*([^:\n]+?)\s*:\s*[^:\n]+$/gm,
   /:\s*([^:\n]+)(?=\n|$)/g,
+  /^\s*([^,\n]+?)\s*,\s*(?:"(?:[^"]|"")*"|[^,\n]+?)\s*,\s*-?\d+(?:\.\d+)?\s*$/gm,
+  /^\s*(?:"(?:[^"]|"")*"|[^,\n]+?)\s*,\s*([^,\n]+?)\s*,\s*-?\d+(?:\.\d+)?\s*$/gm,
   /^(?!\s*(?:---|%%|flowchart|graph|sequenceDiagram|classDiagram|stateDiagram(?:-v2)?|pie|mindmap|timeline|treemap-beta|treeView-beta|kanban|block-beta|quadrantChart|journey|gantt|gitGraph|erDiagram|requirementDiagram|architecture-beta|xychart-beta|sankey-beta|packet|radar-beta|venn-beta|wardley-beta)\b)\s*([^:\n"'`()[\]{}][^:\n]*?)\s*$/gim
 ];
 
@@ -164,6 +185,7 @@ export const collectEditableSourceText = (code: string): EditableSourceText[] =>
         code.lastIndexOf('\n', range.start - 1) + 1,
         code.indexOf('\n', range.end) < 0 ? code.length : code.indexOf('\n', range.end)
       );
+      if (/^\s*%%/.test(line)) return [];
       const kind: EditableSourceText['kind'] = /\|[^|]+\||--?>|<--?|:\s*/.test(line)
         ? 'relation'
         : /^\s*(?:id|text|risk|verifymethod|docref|type)\s*:/i.test(line)
@@ -225,6 +247,85 @@ export const findVisibleTextRange = (
   return ranges[occurrence]?.range ?? (ranges.length === 1 ? ranges[0].range : undefined);
 };
 
+const findClassMemberRange = (
+  code: string,
+  sourceId: string,
+  text: string
+): SourceTextRange | undefined => {
+  if (!['classdiagram', 'classdiagram-v2'].includes(getDiagramKeyword(code)) || !sourceId) {
+    return undefined;
+  }
+  const declaration = new RegExp(
+    String.raw`^\s*class\s+${escapeRegExp(sourceId)}(?:\s*\[[^\]\n]*\])?\s*\{\s*$`,
+    'im'
+  ).exec(code);
+  if (!declaration) return undefined;
+
+  const blockStart = declaration.index + declaration[0].length;
+  const blockEndMatch = /^\s*\}\s*$/m.exec(code.slice(blockStart));
+  if (!blockEndMatch) return undefined;
+  const block = code.slice(blockStart, blockStart + blockEndMatch.index);
+  const wanted = comparableVisibleText(text);
+
+  for (const match of block.matchAll(/^([^\S\r\n]*)(\S(?:.*\S)?)\s*$/gm)) {
+    const value = match[2];
+    if (match.index === undefined || comparableVisibleText(value) !== wanted) continue;
+    const start = blockStart + match.index + match[1].length;
+    return { start, end: start + value.length };
+  }
+  return undefined;
+};
+
+const findERMemberRange = (
+  code: string,
+  sourceId: string,
+  text: string,
+  occurrence = 0
+): SourceTextRange | undefined => {
+  if (getDiagramKeyword(code) !== 'erdiagram' || !sourceId) return undefined;
+  const entityIds = [...code.matchAll(/^\s*([A-Za-z][\w-]*)\s*\{\s*$/gm)].map((match) => match[1]);
+  const entityId =
+    entityIds.find((id) => id === sourceId) ??
+    entityIds.find((id) =>
+      new RegExp(String.raw`(?:^|-)${escapeRegExp(id)}(?:-\d+)?$`, 'i').test(sourceId)
+    );
+  if (!entityId) return undefined;
+  const declaration = new RegExp(String.raw`^\s*${escapeRegExp(entityId)}\s*\{\s*$`, 'im').exec(
+    code
+  );
+  if (!declaration) return undefined;
+  if (comparableVisibleText(text) === comparableVisibleText(entityId)) {
+    const local = declaration[0].indexOf(entityId);
+    return {
+      start: declaration.index + local,
+      end: declaration.index + local + entityId.length
+    };
+  }
+
+  const blockStart = declaration.index + declaration[0].length;
+  const blockEndMatch = /^\s*\}\s*$/m.exec(code.slice(blockStart));
+  if (!blockEndMatch) return undefined;
+  const block = code.slice(blockStart, blockStart + blockEndMatch.index);
+  const wanted = comparableVisibleText(text);
+  const matches: SourceTextRange[] = [];
+  for (const lineMatch of block.matchAll(/^([^\S\r\n]*)(.*\S)\s*$/gm)) {
+    if (lineMatch.index === undefined) continue;
+    const line = lineMatch[2];
+    const lineStart = blockStart + lineMatch.index + lineMatch[1].length;
+    for (const token of line.matchAll(/"([^"]*)"|([^\s"]+)/dg)) {
+      const value = token[1] ?? token[2] ?? '';
+      if (comparableVisibleText(value) !== wanted) continue;
+      const groupIndex = token[1] !== undefined ? 1 : 2;
+      const localRange = getValueRange(token, value, groupIndex);
+      matches.push({
+        start: lineStart + localRange.start,
+        end: lineStart + localRange.end
+      });
+    }
+  }
+  return matches[occurrence] ?? (matches.length === 1 ? matches[0] : undefined);
+};
+
 export const findVisualTextRange = (
   code: string,
   { occurrence = 0, sourceId, text }: VisualTextTarget
@@ -234,7 +335,11 @@ export const findVisualTextRange = (
   const directRange =
     sourceText !== undefined && comparableVisibleText(sourceText) === comparableVisibleText(text)
       ? sourceRange
-      : findVisibleTextRange(code, text, occurrence);
+      : sourceId
+        ? (findClassMemberRange(code, sourceId, text) ??
+          findERMemberRange(code, sourceId, text, occurrence) ??
+          findVisibleTextRange(code, text, occurrence))
+        : findVisibleTextRange(code, text, occurrence);
   if (directRange) return directRange;
   if (getDiagramKeyword(code) === 'xychart-beta') {
     const axis = /^\s*x-axis\s*\[([^\]]*)\]/im.exec(code);
@@ -328,12 +433,96 @@ export const replaceVisualText = (
   }
 });
 
+const removeEmptyRelationText = (
+  code: string,
+  range: SourceTextRange
+): { code: string; range: SourceTextRange } | undefined => {
+  const lineRange = getSourceLineRange(code, range);
+  const line = code.slice(lineRange.start, lineRange.end);
+  if (!/(?:--?>|->>|<\|--|\|\|--|--\|\{|--o\{|Rel\s*\()/i.test(line)) return undefined;
+  const localStart = range.start - lineRange.start;
+  const localEnd = range.end - lineRange.start;
+  const before = line.slice(0, localStart);
+  const after = line.slice(localEnd);
+  let removeStart = localStart;
+  let removeEnd = localEnd;
+
+  if (before.endsWith('|') && after.startsWith('|')) {
+    removeStart -= 1;
+    removeEnd += 1;
+  } else if (getDiagramKeyword(code) === 'erdiagram') {
+    const quotedPrefix = before.match(/\s*:\s*["']$/);
+    const quote = before.at(-1);
+    if (quotedPrefix && (quote === '"' || quote === "'") && after.startsWith(quote)) {
+      removeStart -= quotedPrefix[0].length;
+      removeEnd += 1;
+    } else {
+      const colon = before.match(/\s*:\s*$/);
+      if (colon) removeStart -= colon[0].length;
+    }
+  } else if (!/\bRel(?:_[A-Za-z]+)?\s*\(/i.test(line)) {
+    const colon = before.match(/\s*:\s*$/);
+    if (colon) removeStart -= colon[0].length;
+  }
+
+  if (removeStart === localStart && removeEnd === localEnd) return undefined;
+  const absoluteStart = lineRange.start + removeStart;
+  const absoluteEnd = lineRange.start + removeEnd;
+  return replaceVisualText(code, { start: absoluteStart, end: absoluteEnd }, '');
+};
+
 export const replaceDiagramVisualText = (
   code: string,
   range: SourceTextRange,
   currentText: string,
   nextText: string
 ): { code: string; range: SourceTextRange } => {
+  if (getDiagramKeyword(code) === 'sankey-beta') {
+    const decodeField = (field: string): string => {
+      const trimmed = field.trim();
+      return trimmed.startsWith('"') && trimmed.endsWith('"')
+        ? trimmed.slice(1, -1).replace(/""/g, '"')
+        : trimmed;
+    };
+    const encodeField = (field: string, nextValue: string): string => {
+      const leading = field.slice(0, field.length - field.trimStart().length);
+      const trailing = field.slice(field.trimEnd().length);
+      const wasQuoted = field.trim().startsWith('"') && field.trim().endsWith('"');
+      const value =
+        wasQuoted || /[,"\n]/.test(nextValue) ? `"${nextValue.replace(/"/g, '""')}"` : nextValue;
+      return `${leading}${value}${trailing}`;
+    };
+    let changed = false;
+    const nextCode = code
+      .split('\n')
+      .map((line) => {
+        const match = line.match(
+          /^(\s*)("(?:[^"]|"")*"|[^,\n]+?)(\s*,\s*)("(?:[^"]|"")*"|[^,\n]+?)(\s*,\s*-?\d+(?:\.\d+)?\s*)$/
+        );
+        if (!match) return line;
+        const sourceMatches =
+          comparableVisibleText(decodeField(match[2])) === comparableVisibleText(currentText);
+        const targetMatches =
+          comparableVisibleText(decodeField(match[4])) === comparableVisibleText(currentText);
+        if (!sourceMatches && !targetMatches) return line;
+        changed = true;
+        return `${match[1]}${sourceMatches ? encodeField(match[2], nextText) : match[2]}${match[3]}${targetMatches ? encodeField(match[4], nextText) : match[4]}${match[5]}`;
+      })
+      .join('\n');
+    if (changed) {
+      return {
+        code: nextCode,
+        range: findVisibleTextRange(nextCode, nextText) ?? {
+          start: range.start,
+          end: range.start + nextText.length
+        }
+      };
+    }
+  }
+  if (!nextText.trim()) {
+    const removedRelation = removeEmptyRelationText(code, range);
+    if (removedRelation) return removedRelation;
+  }
   if (getDiagramKeyword(code) === 'requirementdiagram') {
     const lineRange = getSourceLineRange(code, range);
     const line = code.slice(lineRange.start, lineRange.end);

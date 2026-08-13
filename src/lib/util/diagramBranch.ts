@@ -171,11 +171,41 @@ const addFlowchartBranch: BranchStrategy = ({ code, label, sourceId }) => {
 
 const addMindmapBranch: BranchStrategy = ({ code, label }) => {
   const lines = code.trimEnd().split('\n');
-  const index = findLineIndexByLabel(lines, label);
+  let index = findLineIndexByLabel(lines, label);
   if (normalizeLabel(label) && index < 0) return undefined;
+
+  const inlineDeclaration = lines[index]?.match(/^(\s*)mindmap\b[ \t]+(.+)$/i);
+  if (inlineDeclaration) {
+    const [, declarationIndent, root] = inlineDeclaration;
+    lines.splice(
+      index,
+      1,
+      `${declarationIndent}mindmap`,
+      `${declarationIndent}  ${root.trimStart()}`
+    );
+    index += 1;
+  }
+
   const parent = index >= 0 ? lines[index] : (lines.at(-1) ?? '');
-  const indent = `${parent.match(/^\s*/)?.[0] ?? '  '}  `;
-  lines.splice(index >= 0 ? index + 1 : lines.length, 0, `${indent}${getUniqueLabel(code)}`);
+  const parentIndent = parent.match(/^\s*/)?.[0].length ?? 0;
+  let childIndent = parentIndent + 2;
+  let insertIndex = index >= 0 ? index + 1 : lines.length;
+  let foundChild = false;
+  while (insertIndex < lines.length) {
+    const line = lines[insertIndex];
+    if (!line.trim()) {
+      insertIndex += 1;
+      continue;
+    }
+    const indent = line.match(/^\s*/)?.[0].length ?? 0;
+    if (indent <= parentIndent) break;
+    if (!foundChild || indent < childIndent) {
+      childIndent = indent;
+      foundChild = true;
+    }
+    insertIndex += 1;
+  }
+  lines.splice(insertIndex, 0, `${' '.repeat(childIndent)}${getUniqueLabel(code)}`);
   return `${lines.join('\n')}\n`;
 };
 
@@ -229,7 +259,7 @@ const addClassBranch: BranchStrategy = ({ code, label, sourceId }) => {
       }
     }
   }
-  return `${code.trimEnd()}\n    class ${branchId}["${getUniqueLabel(code)}"] {\n      +String 新字段\n      +新方法()\n    }\n    ${source} <|-- ${branchId}\n`;
+  return `${code.trimEnd()}\n    class ${branchId}["${getUniqueLabel(code)}"] {\n      +String 新字段\n      +新方法()\n    }\n    ${source} --> ${branchId} : 关系\n`;
 };
 
 const addStateBranch: BranchStrategy = ({ code, label, sourceId }) => {

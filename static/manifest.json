@@ -1,6 +1,6 @@
 {
-	"short_name": "图表编辑器",
-	"name": "图表编辑器",
+  "short_name": "图表工作台",
+  "name": "图表工作台",
 	"icons": [
 		{
 			"src": "/favicon.png",

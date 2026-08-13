@@ -3,13 +3,15 @@
   import { Button } from '$/components/ui/button';
   import { Input } from '$/components/ui/input';
   import * as ToggleGroup from '$/components/ui/toggle-group';
-  import { waitForRender } from '$lib/util/autoSync';
+  import { getRenderedStateKey, waitForRender } from '$lib/util/autoSync';
+  import { diagramRenderKey } from '$lib/util/diagramStateKey';
   import { notify } from '$lib/util/notify';
-  import { updateCodeStore, validatedState } from '$lib/util/state.svelte';
+  import { validatedState, waitForStateValidation } from '$lib/util/state.svelte';
   import { logEvent } from '$lib/util/stats';
   import { version as FAVersion } from '@fortawesome/fontawesome-free/package.json';
   import dayjs from 'dayjs';
   import { toBase64 } from 'js-base64';
+  import { tick } from 'svelte';
   import DownloadIcon from '~icons/material-symbols/download';
   import WidthIcon from '~icons/material-symbols/width-rounded';
 
@@ -67,6 +69,7 @@
   const getBase64SVG = (svg?: SVGSVGElement, width?: number, height?: number): string => {
     if (svg) {
       svg = svg.cloneNode(true) as SVGSVGElement;
+      svg.querySelector('.svg-pan-zoom_viewport')?.removeAttribute('transform');
       svg.style.removeProperty('display');
       svg.style.removeProperty('width');
       svg.style.removeProperty('height');
@@ -108,69 +111,89 @@ ${svgString}`);
     a.remove();
   };
 
+  const waitForCurrentRender = async (): Promise<void> => {
+    // A template change validates asynchronously before entering the serial SVG
+    // render queue. Export only when the current SVG matches that validated state.
+    await tick();
+    await waitForStateValidation();
+    const deadline = performance.now() + 30_000;
+    while (true) {
+      const state = validatedState.current;
+      if (state.error) {
+        await waitForRender();
+        return;
+      }
+      if (
+        getRenderedStateKey() === diagramRenderKey(state) &&
+        document.querySelector('#container svg')
+      ) {
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        return;
+      }
+      if (performance.now() >= deadline) {
+        throw new Error('Timed out waiting for the current diagram render');
+      }
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      await waitForStateValidation();
+    }
+  };
+
   const exportImage = async (event: Event, exporter: Exporter) => {
     event.stopPropagation();
     event.preventDefault();
-    const originalPanZoom = validatedState.current.panZoom ?? true;
-    updateCodeStore({ panZoom: false });
-    try {
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-      await waitForRender();
-      const canvas = document.createElement('canvas');
-      const svg = document.querySelector<SVGSVGElement>('#container svg');
-      if (!svg) {
-        throw new Error('svg not found');
-      }
-
-      const box = svg.getBoundingClientRect();
-      const viewBox = svg.viewBox?.baseVal;
-      const contentWidth = viewBox && viewBox.width > 0 ? viewBox.width : box.width;
-      const contentHeight = viewBox && viewBox.height > 0 ? viewBox.height : box.height;
-      if (contentWidth <= 0 || contentHeight <= 0) {
-        throw new Error('Rendered SVG has invalid dimensions');
-      }
-      const requestedSize = Number.isFinite(imageSize)
-        ? Math.min(Math.max(Math.round(imageSize), 3), 10_000)
-        : 1080;
-
-      if (imageSizeMode === 'width') {
-        const ratio = contentHeight / contentWidth;
-        canvas.width = requestedSize;
-        canvas.height = requestedSize * ratio;
-      } else if (imageSizeMode === 'height') {
-        const ratio = contentWidth / contentHeight;
-        canvas.width = requestedSize * ratio;
-        canvas.height = requestedSize;
-      } else {
-        const multiplier = 2;
-        canvas.width = contentWidth * multiplier;
-        canvas.height = contentHeight * multiplier;
-      }
-
-      const context = canvas.getContext('2d');
-      if (!context) {
-        throw new Error('context not found');
-      }
-
-      context.fillStyle = window.getComputedStyle(document.body).getPropertyValue('--background');
-      context.fillRect(0, 0, canvas.width, canvas.height);
-
-      const image = new Image();
-      await new Promise<void>((resolve, reject) => {
-        image.addEventListener('load', () => {
-          try {
-            exporter(context, image)();
-            resolve();
-          } catch (error) {
-            reject(error instanceof Error ? error : new Error(String(error)));
-          }
-        });
-        image.addEventListener('error', () => reject(new Error('image export failed')));
-        image.src = `data:image/svg+xml;base64,${getBase64SVG(svg, canvas.width, canvas.height)}`;
-      });
-    } finally {
-      updateCodeStore({ panZoom: originalPanZoom });
+    await waitForCurrentRender();
+    const canvas = document.createElement('canvas');
+    const svg = document.querySelector<SVGSVGElement>('#container svg');
+    if (!svg) {
+      throw new Error('svg not found');
     }
+
+    const box = svg.getBoundingClientRect();
+    const viewBox = svg.viewBox?.baseVal;
+    const contentWidth = viewBox && viewBox.width > 0 ? viewBox.width : box.width;
+    const contentHeight = viewBox && viewBox.height > 0 ? viewBox.height : box.height;
+    if (contentWidth <= 0 || contentHeight <= 0) {
+      throw new Error('Rendered SVG has invalid dimensions');
+    }
+    const requestedSize = Number.isFinite(imageSize)
+      ? Math.min(Math.max(Math.round(imageSize), 3), 10_000)
+      : 1080;
+
+    if (imageSizeMode === 'width') {
+      const ratio = contentHeight / contentWidth;
+      canvas.width = requestedSize;
+      canvas.height = requestedSize * ratio;
+    } else if (imageSizeMode === 'height') {
+      const ratio = contentWidth / contentHeight;
+      canvas.width = requestedSize * ratio;
+      canvas.height = requestedSize;
+    } else {
+      const multiplier = 2;
+      canvas.width = contentWidth * multiplier;
+      canvas.height = contentHeight * multiplier;
+    }
+
+    const context = canvas.getContext('2d');
+    if (!context) {
+      throw new Error('context not found');
+    }
+
+    context.fillStyle = window.getComputedStyle(document.body).getPropertyValue('--background');
+    context.fillRect(0, 0, canvas.width, canvas.height);
+
+    const image = new Image();
+    await new Promise<void>((resolve, reject) => {
+      image.addEventListener('load', () => {
+        try {
+          exporter(context, image)();
+          resolve();
+        } catch (error) {
+          reject(error instanceof Error ? error : new Error(String(error)));
+        }
+      });
+      image.addEventListener('error', () => reject(new Error('image export failed')));
+      image.src = `data:image/svg+xml;base64,${getBase64SVG(svg, canvas.width, canvas.height)}`;
+    });
   };
 
   const downloadImage: Exporter = (context, image) => {
@@ -194,8 +217,9 @@ ${svgString}`);
     }
   };
 
-  const onDownloadSVG = () => {
+  const onDownloadSVG = async () => {
     try {
+      await waitForCurrentRender();
       simulateDownload(getFileName('svg'), `data:image/svg+xml;base64,${getBase64SVG()}`);
       logEvent('download', { type: 'svg' });
     } catch (error) {

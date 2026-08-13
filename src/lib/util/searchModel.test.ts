@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { searchEditableSourceText, searchVisualConnectionText } from './searchModel';
+import {
+  searchEditableSourceText,
+  searchVisualConnectionText,
+  searchVisualElementText
+} from './searchModel';
 import { createVisualConnection } from './visualConnections';
 
 const options = { caseSensitive: false, wholeWord: false };
@@ -107,5 +111,34 @@ xychart-beta
     expect(searchVisualConnectionText({ [connection.id]: connection }, 'right', options)).toEqual(
       []
     );
+  });
+
+  it('searches free shape and icon labels without exposing geometry', () => {
+    const results = searchVisualElementText(
+      {
+        'element-search': {
+          height: 80,
+          id: 'element-search',
+          kind: 'icon',
+          label: '移动端用户入口',
+          shape: 'person',
+          width: 100,
+          x: 320,
+          y: 180
+        }
+      },
+      '用户',
+      options
+    );
+
+    expect(results).toMatchObject([
+      {
+        containerText: '移动端用户入口',
+        kind: '图标文字',
+        text: '用户',
+        visualElementId: 'element-search'
+      }
+    ]);
+    expect(searchVisualElementText({}, '320', options)).toEqual([]);
   });
 });

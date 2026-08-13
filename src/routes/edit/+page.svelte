@@ -23,6 +23,7 @@
   import { validatedState, updateCodeStore } from '$/util/state.svelte';
   import { logEvent } from '$/util/stats';
   import { initHandler } from '$/util/util';
+  import { mobileWorkspace } from '$lib/util/mobileWorkspace.svelte';
   import { visualSelection } from '$lib/util/visualSelection.svelte';
   import { onMount } from 'svelte';
   import { PanelsTopLeft } from 'lucide-svelte';
@@ -50,13 +51,23 @@
     }
   ];
 
-  let width = $state(0);
-  let isTouchDevice = $state(false);
+  const viewportWidth = (): number =>
+    typeof window === 'undefined' ? 1024 : Math.max(window.innerWidth, 1);
+
+  const hasCoarsePointer = (): boolean =>
+    typeof window !== 'undefined' &&
+    (navigator.maxTouchPoints > 0 || matchMedia('(pointer: coarse)').matches);
+
+  // The app is client-rendered. Starting from the real viewport avoids mounting
+  // the mobile editor once before immediately replacing it with Monaco on desktop.
+  let width = $state(viewportWidth());
+  let isTouchDevice = $state(hasCoarsePointer());
   let isMobile = $derived(width < 768 || (isTouchDevice && width < 1024));
   let isViewMode = $state(true);
 
   onMount(() => {
-    isTouchDevice = navigator.maxTouchPoints > 0 || matchMedia('(pointer: coarse)').matches;
+    width = viewportWidth();
+    isTouchDevice = hasCoarsePointer();
     void initHandler();
     const handleAppInstalled = () => {
       logEvent('pwaInstalled', { isMobile });
@@ -101,54 +112,64 @@
   </Navbar>
 
   <div class="flex flex-1 flex-col overflow-hidden" bind:clientWidth={width}>
-    <div
-      class={[
-        'size-full',
-        isMobile && [
-          'w-[200%] transition-transform duration-200 ease-out',
-          isViewMode && '-translate-x-1/2'
-        ]
-      ]}>
+    <div class="size-full">
       <Resizable.PaneGroup
         direction="horizontal"
         autoSaveId="liveEditor"
-        class={isMobile ? 'gap-0 p-0' : 'gap-0 p-6 pt-0'}>
-        <Resizable.Pane bind:this={editorPane} defaultSize={30} minSize={15}>
-          {#if !isMobile || !isViewMode}
+        class={isMobile ? 'relative gap-0 p-0' : 'gap-0 p-6 pt-0'}>
+        <Resizable.Pane
+          bind:this={editorPane}
+          defaultSize={30}
+          minSize={15}
+          class={isMobile
+            ? [
+                'absolute inset-0 z-10 w-full',
+                isViewMode ? 'invisible pointer-events-none' : 'visible'
+              ]
+            : undefined}>
+          <div
+            class={[
+              'flex h-full min-h-0 flex-col overflow-y-auto',
+              isMobile ? 'gap-3 px-2 pb-[max(.75rem,env(safe-area-inset-bottom))]' : 'gap-6 pr-1'
+            ]}>
             <div
               class={[
-                'flex h-full min-h-0 flex-col overflow-y-auto',
-                isMobile ? 'gap-3 px-2 pb-[max(.75rem,env(safe-area-inset-bottom))]' : 'gap-6 pr-1'
-              ]}>
-              <div class={['flex shrink-0 flex-col', isMobile ? 'min-h-[56dvh]' : 'min-h-40']}>
-                {#if visualSelection.isColorPanelOpen && !isMobile}
-                  <ColorPickerPanel />
-                {:else}
-                  <Card
-                    onselect={tabSelectHandler}
-                    isOpen
-                    tabs={editorTabs}
-                    activeTabID={validatedState.current.editorMode}
-                    isClosable={false}>
-                    <Editor {isMobile} />
-                  </Card>
-                {/if}
-              </div>
-
-              <div class="group flex flex-wrap justify-between gap-4 sm:gap-6">
-                <Preset />
-                <Actions />
-              </div>
+                'flex min-h-0 min-w-0 shrink-0 flex-col',
+                isMobile ? 'h-[clamp(16rem,56dvh,36rem)]' : 'h-[clamp(18rem,38dvh,32rem)]'
+              ]}
+              style:height={isMobile && mobileWorkspace.isKeyboardOpen
+                ? 'max(10rem, calc(var(--mobile-visual-height, 100dvh) - 5.5rem))'
+                : undefined}>
+              {#if visualSelection.isColorPanelOpen && !isMobile}
+                <ColorPickerPanel />
+              {:else}
+                <Card
+                  fillHeight
+                  onselect={tabSelectHandler}
+                  isOpen
+                  tabs={editorTabs}
+                  activeTabID={validatedState.current.editorMode}
+                  isClosable={false}>
+                  <Editor {isMobile} />
+                </Card>
+              {/if}
             </div>
-          {/if}
+
+            <div class="group flex flex-wrap justify-between gap-4 sm:gap-6">
+              <Preset />
+              <Actions />
+            </div>
+          </div>
         </Resizable.Pane>
         <Resizable.Handle class="mr-1 hidden opacity-0 sm:block" />
         <Resizable.Pane
           minSize={15}
-          class={[
-            'relative flex h-full flex-1 flex-col overflow-hidden',
-            isMobile && !isViewMode && 'invisible'
-          ]}>
+          class={isMobile
+            ? [
+                'absolute inset-0 z-20 flex h-full w-full flex-col overflow-hidden',
+                isViewMode ? 'visible' : 'invisible pointer-events-none'
+              ]
+            : 'relative flex h-full flex-1 flex-col overflow-hidden'}>
           <View {isMobile} {panZoomState} shouldShowGrid={validatedState.current.grid} />
           {#if !isMobile}
             <WorkspaceQuickToolbar />

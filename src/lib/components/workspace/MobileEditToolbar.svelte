@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Button } from '$lib/components/ui/button';
+  import { addFocusedDiagramBranch } from '$lib/util/branchActions';
   import {
     connectionEditor,
     finishConnectionCreation,
@@ -13,14 +14,11 @@
     type MobileToolMode
   } from '$lib/util/mobileWorkspace.svelte';
   import { notify } from '$lib/util/notify';
+  import { canUndoEdit, undoLastEdit, validatedState } from '$lib/util/state.svelte';
   import {
-    addDiagramBranch,
-    canRedoEdit,
-    canUndoEdit,
-    redoLastEdit,
-    undoLastEdit,
-    validatedState
-  } from '$lib/util/state.svelte';
+    saveCurrentWorkspaceWithFeedback,
+    workspaceSaveState
+  } from '$lib/util/workspaceSave.svelte';
   import { requestVisualEdit } from '$lib/util/visualDocument.svelte';
   import {
     openVisualColorPanel,
@@ -33,6 +31,7 @@
     selectAllVisualElements,
     setSelectedLocked
   } from '$lib/util/visualOperations';
+  import { addVisualElementBranch } from '$lib/util/visualElementActions';
   import {
     AlignCenterHorizontal,
     ArrowUpRight,
@@ -40,13 +39,14 @@
     Focus,
     GitBranchPlus,
     Hand,
+    LoaderCircle,
     Lock,
     LockOpen,
     MoreHorizontal,
     MousePointer2,
     Palette,
     Pencil,
-    Redo2,
+    Save,
     Trash2,
     Undo2
   } from 'lucide-svelte';
@@ -89,8 +89,12 @@
 
   const addBranch = (): void => {
     if (!current || current.kind === 'edge') return;
+    if (validatedState.current.visualElements?.[current.id]) {
+      if (!addVisualElementBranch(current.id)) notify('当前元素暂时无法添加分支。');
+      return;
+    }
     if (
-      !addDiagramBranch({
+      !addFocusedDiagramBranch({
         label: current.label,
         mode: getDiagramKeyword(validatedState.current.code) === 'kanban' ? 'card' : 'branch',
         sourceId: current.sourceId
@@ -229,9 +233,16 @@
       <Button
         class="h-12 flex-col gap-0 px-1 text-[11px]"
         variant="ghost"
-        disabled={!canRedoEdit.current}
-        onclick={() => redoLastEdit()}>
-        <Redo2 class="size-4" />重做
+        aria-label="保存本机版本"
+        disabled={workspaceSaveState.isSaving}
+        onclick={saveCurrentWorkspaceWithFeedback}>
+        {#if workspaceSaveState.isSaving}
+          <LoaderCircle class="size-4 animate-spin" />保存中
+        {:else if !workspaceSaveState.hasUnsavedChanges}
+          <Check class="size-4" />已存本机
+        {:else}
+          <Save class="size-4" />存本机
+        {/if}
       </Button>
       <Button
         class="h-12 flex-col gap-0 px-1 text-[11px]"

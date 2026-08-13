@@ -6,7 +6,13 @@ export interface InvestorSample {
     Partial<
       Pick<
         State,
-        'mermaid' | 'visualConnections' | 'visualLayers' | 'visualPositions' | 'visualStyles'
+        | 'mermaid'
+        | 'sampleDescription'
+        | 'visualConnections'
+        | 'visualElements'
+        | 'visualLayers'
+        | 'visualPositions'
+        | 'visualStyles'
       >
     >;
   title: string;
@@ -17,6 +23,8 @@ export const investorSamples: InvestorSample[] = [
     diagramType: 'Flowchart',
     title: 'SaaS 产品系统架构',
     state: {
+      sampleDescription:
+        '这个示例展示 SaaS 产品从用户端、Web 应用到 API 网关、核心服务与数据基础设施的完整调用链。实线表示业务请求，虚线表示监控数据；可以继续修改模块名称、添加服务分支或补充依赖关系。',
       code: `flowchart TB
   subgraph experience["用户体验层"]
     direction LR
@@ -70,6 +78,8 @@ export const investorSamples: InvestorSample[] = [
     diagramType: 'Gantt',
     title: '创业产品路线图',
     state: {
+      sampleDescription:
+        '路线图按市场验证、MVP、内测、公测、商业化和规模化分组，任务条展示先后依赖与预计周期。可以编辑 section 和任务名称，并继续添加里程碑或新的阶段。',
       code: `gantt
   title 创业产品从验证到规模化路线图
   dateFormat YYYY-MM-DD
@@ -105,6 +115,8 @@ export const investorSamples: InvestorSample[] = [
     diagramType: 'User Journey',
     title: '用户增长旅程',
     state: {
+      sampleDescription:
+        '旅程覆盖用户发现产品、注册、获得价值、付费和主动推荐的关键阶段。每项任务后的 1–5 分代表体验情绪，可编辑步骤、参与角色并拖动情绪点调整分数。',
       code: `journey
   title 从发现产品到主动推荐的用户旅程
   section 发现产品
@@ -129,6 +141,8 @@ export const investorSamples: InvestorSample[] = [
     diagramType: 'C4',
     title: 'C4 系统关系图',
     state: {
+      sampleDescription:
+        '这个 C4 容器图说明内容创作者和团队管理员如何使用图表平台，并展示 Web 编辑器、业务 API、渲染服务、数据库和外部系统的隶属与调用关系。所有标题、说明和关系文字都可以继续编辑。',
       code: `C4Container
   title 智能图表平台 C4 容器图
   Person(creator, "内容创作者", "创建、编辑并发布可视化图表")
@@ -159,6 +173,8 @@ export const investorSamples: InvestorSample[] = [
     diagramType: 'Quadrant',
     title: '市场机会矩阵',
     state: {
+      sampleDescription:
+        '矩阵用横轴表示进入门槛、纵轴表示市场潜力，对六类 AI 可视化机会进行定位。可以拖动任意机会点改变坐标，也可以在左侧数据中修改名称和象限标题。',
       code: `quadrantChart
   title AI 可视化产品市场机会矩阵
   x-axis 进入门槛低 --> 进入门槛高
@@ -177,122 +193,38 @@ export const investorSamples: InvestorSample[] = [
     }
   },
   {
-    diagramType: 'Block',
-    title: 'AI 产品工作流',
+    diagramType: 'Sankey',
+    title: 'AI 产品转化桑基图',
     state: {
-      code: `block-beta
-  columns 4
-  brief["业务需求"] knowledge[("知识与数据")] agent["AI 编排引擎"] review["人工审核"]
-  feedback["效果反馈"] observe["质量监控"] delivery["多渠道交付"] guard["安全护栏"]
-`,
-      visualConnections: {
-        'connection-ai-1': {
-          direction: 'forward',
-          id: 'connection-ai-1',
-          label: '明确目标',
-          labelBackground: '#f8fafc',
-          labelColor: '#334155',
-          lineStyle: 'solid',
-          source: { anchor: 'right', elementId: 'brief', x: 0, y: 0 },
-          stroke: '#475569',
-          strokeWidth: 2,
-          target: { anchor: 'left', elementId: 'knowledge', x: 0, y: 0 }
-        },
-        'connection-ai-2': {
-          direction: 'forward',
-          id: 'connection-ai-2',
-          label: '检索上下文',
-          labelBackground: '#f8fafc',
-          labelColor: '#334155',
-          lineStyle: 'solid',
-          source: { anchor: 'right', elementId: 'knowledge', x: 0, y: 0 },
-          stroke: '#475569',
-          strokeWidth: 2,
-          target: { anchor: 'left', elementId: 'agent', x: 0, y: 0 }
-        },
-        'connection-ai-3': {
-          direction: 'forward',
-          id: 'connection-ai-3',
-          label: '生成方案',
-          labelBackground: '#f8fafc',
-          labelColor: '#334155',
-          lineStyle: 'solid',
-          source: { anchor: 'right', elementId: 'agent', x: 0, y: 0 },
-          stroke: '#475569',
-          strokeWidth: 2,
-          target: { anchor: 'left', elementId: 'review', x: 0, y: 0 }
-        },
-        'connection-ai-4': {
-          direction: 'forward',
-          id: 'connection-ai-4',
-          label: '审核通过',
-          labelBackground: '#f8fafc',
-          labelColor: '#334155',
-          lineStyle: 'solid',
-          source: { anchor: 'bottom', elementId: 'review', x: 0, y: 0 },
-          stroke: '#0f766e',
-          strokeWidth: 2,
-          target: { anchor: 'top', elementId: 'guard', x: 0, y: 0 }
-        },
-        'connection-ai-5': {
-          direction: 'forward',
-          id: 'connection-ai-5',
-          label: '合规发布',
-          labelBackground: '#f8fafc',
-          labelColor: '#334155',
-          lineStyle: 'solid',
-          source: { anchor: 'left', elementId: 'guard', x: 0, y: 0 },
-          stroke: '#0f766e',
-          strokeWidth: 2,
-          target: { anchor: 'right', elementId: 'delivery', x: 0, y: 0 }
-        },
-        'connection-ai-6': {
-          direction: 'forward',
-          id: 'connection-ai-6',
-          label: '运行指标',
-          labelBackground: '#f8fafc',
-          labelColor: '#334155',
-          lineStyle: 'solid',
-          source: { anchor: 'left', elementId: 'delivery', x: 0, y: 0 },
-          stroke: '#475569',
-          strokeWidth: 2,
-          target: { anchor: 'right', elementId: 'observe', x: 0, y: 0 }
-        },
-        'connection-ai-7': {
-          direction: 'forward',
-          id: 'connection-ai-7',
-          label: '持续优化',
-          labelBackground: '#f8fafc',
-          labelColor: '#334155',
-          lineStyle: 'dashed',
-          source: { anchor: 'left', elementId: 'observe', x: 0, y: 0 },
-          stroke: '#d97706',
-          strokeWidth: 2,
-          target: { anchor: 'right', elementId: 'feedback', x: 0, y: 0 }
-        },
-        'connection-ai-loop': {
-          direction: 'forward',
-          id: 'connection-ai-loop',
-          label: '新一轮需求',
-          labelBackground: '#f8fafc',
-          labelColor: '#334155',
-          lineStyle: 'dashed',
-          source: { anchor: 'top', elementId: 'feedback', x: 0, y: 0 },
-          stroke: '#d97706',
-          strokeWidth: 2,
-          target: { anchor: 'bottom', elementId: 'brief', x: 0, y: 0 }
-        }
-      },
-      visualStyles: {
-        agent: { fill: '#dbeafe', stroke: '#2563eb', text: '#172554' },
-        brief: { fill: '#f1f5f9', stroke: '#64748b', text: '#0f172a' },
-        delivery: { fill: '#ecfdf5', stroke: '#0f766e', text: '#064e3b' },
-        feedback: { fill: '#fffbeb', stroke: '#d97706', text: '#78350f' },
-        guard: { fill: '#ecfdf5', stroke: '#0f766e', text: '#064e3b' },
-        knowledge: { fill: '#f1f5f9', stroke: '#64748b', text: '#0f172a' },
-        observe: { fill: '#f8fafc', stroke: '#475569', text: '#0f172a' },
-        review: { fill: '#f8fafc', stroke: '#475569', text: '#0f172a' }
-      }
+      sampleDescription:
+        '桑基图把搜索、社交、直接访问和内容推荐流量连接到四类 AI 功能，再流向注册、留存、付费和流失结果。连线宽度由数值决定，可在代码数据中修改权重并观察转化结构变化。',
+      code: `%%{init: {"sankey": {"height": 280, "width": 600}}}%%
+sankey-beta
+搜索引擎,AI 对话,32
+搜索引擎,文档分析,18
+社交媒体,图片生成,26
+社交媒体,AI 对话,14
+直接访问,文档分析,16
+直接访问,数据分析,14
+内容推荐,图片生成,12
+内容推荐,数据分析,10
+AI 对话,注册,25
+AI 对话,继续使用,15
+AI 对话,付费转化,4
+AI 对话,用户流失,2
+文档分析,注册,10
+文档分析,继续使用,15
+文档分析,付费转化,6
+文档分析,用户流失,3
+图片生成,注册,16
+图片生成,继续使用,12
+图片生成,付费转化,5
+图片生成,用户流失,5
+数据分析,注册,6
+数据分析,继续使用,8
+数据分析,付费转化,8
+数据分析,用户流失,2
+`
     }
   }
 ];

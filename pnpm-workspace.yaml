@@ -1,0 +1,5 @@
+allowBuilds:
+  deasync: true
+  esbuild: true
+  svelte-preprocess: true
+  vue-demi: false

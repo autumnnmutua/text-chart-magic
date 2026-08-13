@@ -1,7 +1,7 @@
 import type { VisualStyle } from '$/types';
 
 export type VisualElementKind = 'container' | 'edge' | 'node' | 'text';
-export type VisualLayoutKind = 'architecture' | 'block' | 'c4';
+export type VisualLayoutKind = 'architecture' | 'block' | 'c4' | 'overlay';
 
 export interface VisualSelectionItem {
   canDelete?: boolean;

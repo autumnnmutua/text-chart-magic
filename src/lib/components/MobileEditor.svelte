@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { EditorProps } from '$/types';
   import { editorFocus } from '$/util/editorFocus.svelte';
-  import { updateCodeStore, validatedState } from '$/util/state.svelte';
+  import { inputState, updateCodeStore } from '$/util/state.svelte';
   import { findVisualTextRange } from '$/util/visualTextEdit';
   import { json, jsonLanguage } from '@codemirror/lang-json';
   import { markdown } from '@codemirror/lang-markdown';
@@ -17,19 +17,28 @@
 
   let editorView: EditorView | undefined;
   let editorContainer: HTMLDivElement;
-  // Deliberately not $state: the sync effect below both reads and writes it,
-  // so a reactive currentText would make every keystroke re-run the effect
-  // against the not-yet-revalidated state and revert the user's input.
+  // Deliberately not $state: it is an editor synchronization guard, not UI
+  // state. Making it reactive would add an unnecessary effect cycle per key.
   let currentText = '';
   let handledFocusRequestID = 0;
   let pendingFocus: (typeof editorFocus)['current'];
+  let measureFrame = 0;
   const themeCompartment = new Compartment();
   const languageCompartment = new Compartment();
 
   const { onUpdate }: EditorProps = $props();
 
+  const scheduleEditorMeasure = (): void => {
+    if (!editorView) return;
+    if (measureFrame) cancelAnimationFrame(measureFrame);
+    measureFrame = requestAnimationFrame(() => {
+      measureFrame = 0;
+      editorView?.requestMeasure();
+    });
+  };
+
   const applyPendingFocus = () => {
-    if (!editorView || !pendingFocus || validatedState.current.editorMode !== 'code') return;
+    if (!editorView || !pendingFocus || inputState.editorMode !== 'code') return;
     const range = findVisualTextRange(editorView.state.doc.toString(), {
       occurrence: pendingFocus.occurrence,
       sourceId: pendingFocus.sourceId,
@@ -61,7 +70,7 @@
   });
 
   onMount(() => {
-    const initial = validatedState.current;
+    const initial = inputState;
     const initialIsJson = initial.editorMode === 'config';
     currentText = initialIsJson ? initial.mermaid : initial.code;
     editorView = new EditorView({
@@ -89,7 +98,9 @@
               height: '100%'
             },
             '&.cm-scroller': {
-              overflow: 'auto'
+              overscrollBehavior: 'contain',
+              overflow: 'auto',
+              touchAction: 'pan-x pan-y'
             }
           })
         ]
@@ -97,14 +108,27 @@
       parent: editorContainer
     });
 
+    const resizeObserver = new ResizeObserver(scheduleEditorMeasure);
+    const visualViewport = window.visualViewport;
+    resizeObserver.observe(editorContainer);
+    window.addEventListener('resize', scheduleEditorMeasure);
+    window.addEventListener('orientationchange', scheduleEditorMeasure);
+    visualViewport?.addEventListener('resize', scheduleEditorMeasure);
+    scheduleEditorMeasure();
+
     return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener('resize', scheduleEditorMeasure);
+      window.removeEventListener('orientationchange', scheduleEditorMeasure);
+      visualViewport?.removeEventListener('resize', scheduleEditorMeasure);
+      if (measureFrame) cancelAnimationFrame(measureFrame);
       editorView?.destroy();
       editorView = undefined;
     };
   });
 
   $effect(() => {
-    const { editorMode, code, mermaid } = validatedState.current;
+    const { editorMode, code, mermaid } = inputState;
     const text = editorMode === 'code' ? code : mermaid;
     if (!editorView) {
       return;
@@ -135,4 +159,8 @@
   });
 </script>
 
-<div bind:this={editorContainer} class="size-full"></div>
+<div
+  bind:this={editorContainer}
+  class="h-full min-h-0 w-full overflow-hidden"
+  data-testid="mobile-code-editor">
+</div>

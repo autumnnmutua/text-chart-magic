@@ -1,6 +1,7 @@
 import { expect, test } from './test';
 import type { Page } from '@playwright/test';
-import { setEditorCode } from './utils';
+import { localizedDiagramSamples } from '../src/lib/util/diagramSamples';
+import { setEditorCode, TEST_BASE_URL } from './utils';
 
 const getStoredCode = async (page: Page): Promise<string> =>
   page.evaluate(() => {
@@ -51,6 +52,7 @@ const chooseViewText = async (page: Page, text: string): Promise<void> => {
 };
 
 const editViewText = async (page: Page, from: string, to: string): Promise<void> => {
+  await expect(page.locator('#view')).toHaveAttribute('aria-busy', 'false');
   await page.locator('#view').getByText(from, { exact: true }).first().dblclick({ force: true });
   await expect(page.getByLabel('图中文字编辑')).toBeVisible();
   await page.getByLabel('图中文字编辑').fill(to);
@@ -65,6 +67,7 @@ const editViewTextContaining = async (
   to: string,
   renderedText = to
 ): Promise<void> => {
+  await expect(page.locator('#view')).toHaveAttribute('aria-busy', 'false');
   await page
     .locator('#view foreignObject p, #view text, #view tspan')
     .filter({ hasText: from })
@@ -411,7 +414,7 @@ test.describe('图上分支编辑', () => {
 "产品"
     "需求": 12`;
     await setEditorCode(page, original);
-    await page.locator('#view').getByText('需求', { exact: true }).first().click({ force: true });
+    await chooseViewText(page, '需求');
     await page.getByRole('button', { name: '分支' }).click();
     await expect(page.locator('#view')).toContainText('新分支');
 
@@ -443,7 +446,7 @@ test.describe('图上分支编辑', () => {
     }, editedZoom);
   });
 
-  test('同类型语法错误会回到错误前的有效状态', async ({ page }) => {
+  test('同类型语法草稿会被保留且不会破坏最后一次有效画面', async ({ page }) => {
     await page.goto('/');
     await page.waitForSelector('#view svg');
 
@@ -463,9 +466,10 @@ test.describe('图上分支编辑', () => {
     );
     await page.waitForFunction(() => {
       const saved = window.localStorage.getItem('codeStore');
-      return saved ? (JSON.parse(saved) as { code: string }).code.includes('B[结束]') : false;
+      return saved ? (JSON.parse(saved) as { code: string }).code.includes('A[项目') : false;
     });
-    expect(await getStoredCode(page)).toContain('A[项目] --> B[结束]');
+    expect(await getStoredCode(page)).toContain('A[项目');
+    await expect(page.locator('#view')).toContainText('结束');
   });
 
   test('其他图上的文字也可以直接编辑', async ({ page }) => {
@@ -477,8 +481,7 @@ test.describe('图上分支编辑', () => {
       `pie title 宠物
     "狗" : 10`
     );
-    await page.locator('#view').getByText('狗', { exact: true }).click({ force: true });
-    await page.keyboard.insertText('中文狗');
+    await editViewText(page, '狗', '中文狗');
 
     await page.waitForFunction(() => {
       const saved = window.localStorage.getItem('codeStore');
@@ -785,11 +788,7 @@ test.describe('图上分支编辑', () => {
     await editViewText(page, '新分支', '二级需求');
     await expect(page.locator('#view')).toContainText('二级需求');
 
-    await page
-      .locator('#view')
-      .getByText('二级需求', { exact: true })
-      .first()
-      .click({ force: true });
+    await chooseViewText(page, '二级需求');
     await page.getByRole('button', { name: '分支' }).click();
     await editViewText(page, '新分支', '三级需求');
     await expect(page.locator('#view')).toContainText('三级需求');
@@ -801,11 +800,7 @@ test.describe('图上分支编辑', () => {
     await expect(page.locator('#view')).toContainText('二级需求');
     await expect(page.locator('#view')).toContainText('三级需求');
 
-    await page
-      .locator('#view')
-      .getByText('三级需求', { exact: true })
-      .first()
-      .click({ force: true });
+    await chooseViewText(page, '三级需求');
     await page.getByRole('button', { name: '删除' }).click();
     await expect(page.locator('#view')).not.toContainText('三级需求');
     await expectStoredCodeExcludes(page, '三级需求');
@@ -821,10 +816,10 @@ test.describe('图上分支编辑', () => {
 0-15: "字段A"`
     );
 
-    await page.locator('#view').getByText('字段A', { exact: true }).first().click({ force: true });
+    await chooseViewText(page, '字段A');
     await page.getByRole('button', { name: '分支' }).click();
     await editViewText(page, '新分支', '字段B');
-    await page.locator('#view').getByText('字段B', { exact: true }).first().click({ force: true });
+    await chooseViewText(page, '字段B');
     await page.getByRole('button', { name: '分支' }).click();
     await editViewText(page, '新分支', '字段C');
 
@@ -834,7 +829,7 @@ test.describe('图上分支编辑', () => {
     await page.waitForSelector('#view svg');
     await expect(page.locator('#view')).toContainText('字段B');
     await expect(page.locator('#view')).toContainText('字段C');
-    await page.locator('#view').getByText('字段B', { exact: true }).first().click({ force: true });
+    await chooseViewText(page, '字段B');
     await expect(page.getByRole('button', { name: '删除' })).toHaveAttribute('title', /字段B/);
     await page.getByRole('button', { name: '删除' }).click();
     await expect(page.locator('#view')).not.toContainText('字段B');
@@ -1016,9 +1011,9 @@ test.describe('图上分支编辑', () => {
     await expectStoredCodeExcludes(page, '新增机会');
   });
 
-  test('左上角标题只展示图表编辑器且不能点击', async ({ page }) => {
+  test('左上角标题只展示图表工作台且不能点击', async ({ page }) => {
     await page.goto('/');
-    const title = page.locator('nav').getByText('图表编辑器', { exact: true });
+    const title = page.locator('nav').getByText('图表工作台', { exact: true });
     await expect(title).toBeVisible();
     await expect(title).toHaveCSS('pointer-events', 'none');
     await expect(page.locator('nav').getByText('图表魔法编辑器', { exact: true })).toHaveCount(0);
@@ -1293,6 +1288,8 @@ test.describe('图上分支编辑', () => {
     await page.getByRole('button', { name: '分支' }).click();
     await expect.poll(() => getStoredCode(page)).toContain('ORDER ||--o{ ENTITY1');
     await editViewText(page, '新分支', '明细');
+    await editViewText(page, '明细', '订单明细');
+    await expect.poll(() => getStoredCode(page)).toContain('string name "订单明细"');
     await chooseViewText(page, 'ENTITY1');
     await page.getByRole('button', { name: '删除' }).click();
     await expect.poll(() => getStoredCode(page)).not.toContain('ENTITY1');
@@ -1641,7 +1638,7 @@ User -> Product`
 
   test('C4 触控首次拖动模块不会被画布平移抢占', async ({ browser }) => {
     const context = await browser.newContext({
-      baseURL: 'http://localhost:3000',
+      baseURL: TEST_BASE_URL,
       hasTouch: true,
       isMobile: true,
       viewport: { height: 820, width: 430 }
@@ -1655,11 +1652,12 @@ User -> Product`
         `C4Context
     Person(user, "用户")
     System(app, "应用")
-    Rel(user, app, "使用")`
+    Rel(user, app, "使用")`,
+        { waitForRender: false }
       );
       await page.locator('#editorMode').click();
-      await page.waitForTimeout(350);
       const node = page.locator('#view svg g[data-c4-id="app"]');
+      await expect(node).toBeVisible();
       const relation = page
         .locator('#view svg g')
         .filter({ hasText: '使用' })
@@ -1708,12 +1706,12 @@ User -> Product`
     }
   });
 
-  test('网站使用新的图表编辑器图标资源', async ({ page }) => {
+  test('网站使用新的图表工作台图标资源', async ({ page }) => {
     await page.goto('/');
     await expect(page.locator('nav svg.size-6')).toBeVisible();
     await expect(page.locator('link[rel="icon"]')).toHaveAttribute('href', /favicon\.svg/);
     const favicon = await page.request.get('/favicon.svg');
-    expect(await favicon.text()).toContain('aria-label="图表编辑器"');
+    expect(await favicon.text()).toContain('aria-label="图表工作台"');
   });
 
   test('树图夜晚模式会使用高对比暗色配色', async ({ page }) => {
@@ -1756,6 +1754,13 @@ User -> Product`
     await expect(page.locator('#view')).toContainText('校验通过');
     await page.reload();
     await expect(page.locator('#view')).toContainText('校验通过');
+    await page.locator('#view').getByText('校验通过', { exact: true }).dblclick({ force: true });
+    await page.getByLabel('图中文字编辑').fill('');
+    await page.keyboard.press('Enter');
+    await expect.poll(() => getStoredCode(page)).toContain('A --> A_branch_1[新分支]');
+    await expect(page.locator('#view')).not.toContainText('校验通过');
+    await page.getByRole('button', { name: '撤回' }).click();
+    await expect(page.locator('#view')).toContainText('校验通过');
   });
 
   test('类图新增类的标题字段方法和后续成员均可编辑', async ({ page }) => {
@@ -1779,12 +1784,19 @@ User -> Product`
     await editViewText(page, '+String 新字段', '+String status');
     const code = await getStoredCode(page);
     expect(code).toContain('class Branch1["订单服务"]');
+    expect(code).toContain('Root --> Branch1 : 关系');
     expect(code).toContain('+String orderId');
     expect(code).toContain('+createOrder()');
     expect(code).toContain('+String status');
     await page.reload();
     await expect(page.locator('#view')).toContainText('订单服务');
     await expect(page.locator('#view')).toContainText('+String status');
+    await chooseViewText(page, '订单服务');
+    await page.getByRole('button', { name: '删除' }).click();
+    await expect.poll(() => getStoredCode(page)).not.toContain('class Branch1');
+    await expect.poll(() => getStoredCode(page)).not.toContain('Root --> Branch1');
+    await page.getByRole('button', { name: '撤回' }).click();
+    await expect(page.locator('#view')).toContainText('订单服务');
   });
 
   test('需求图新增分支的 ID 文本风险和验证方式均可编辑', async ({ page }) => {
@@ -1824,6 +1836,64 @@ User -> Product`
     expect(code).toContain('root - contains -> branch1');
     await page.reload();
     await expect(page.locator('#view')).toContainText('支付需求');
+  });
+
+  test('初始模板的类字段、实体属性、C4 说明和需求字段均使用统一编辑链路', async ({ page }) => {
+    const cases = [
+      {
+        code: localizedDiagramSamples.Class[0].code,
+        from: '+String orderNo',
+        stored: '+String orderId',
+        to: '+String orderId'
+      },
+      {
+        code: localizedDiagramSamples['Entity Relationship'][0].code,
+        from: '订单编号',
+        stored: '"订单主键"',
+        to: '订单主键'
+      },
+      {
+        code: localizedDiagramSamples.C4[0].code,
+        from: '处理订单和库存规则',
+        stored: '"处理订单和履约规则"',
+        to: '处理订单和履约规则'
+      },
+      {
+        code: localizedDiagramSamples.Requirement[0].code,
+        from: 'R001',
+        rendered: 'R100',
+        stored: 'id: R100',
+        to: 'R100'
+      },
+      {
+        code: localizedDiagramSamples.Requirement[0].code,
+        from: 'Risk: Medium',
+        rendered: 'Risk: High',
+        stored: 'risk: high',
+        to: 'High'
+      },
+      {
+        code: localizedDiagramSamples.Pie[0].code,
+        from: '移动应用',
+        rendered: '移动客户端',
+        stored: '"移动客户端" : 45',
+        to: '移动客户端'
+      },
+      {
+        code: localizedDiagramSamples.Sankey[0].code,
+        from: '浏览商品',
+        rendered: '查看商品',
+        stored: '"查看商品"',
+        to: '查看商品'
+      }
+    ];
+
+    await page.goto('/');
+    for (const item of cases) {
+      await setEditorCode(page, item.code);
+      await editViewTextContaining(page, item.from, item.to, item.rendered ?? item.to);
+      await expect.poll(() => getStoredCode(page), item.from).toContain(item.stored);
+    }
   });
 
   test('架构图原始和新增模块可自由移动且箭头实时跟随并可恢复', async ({ page }) => {

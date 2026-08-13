@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { addManualEntry } from '$lib/components/History/historyState.svelte';
   import { Button } from '$lib/components/ui/button';
-  import { closeCommandPalette, openCommandPalette } from '$lib/util/commandRegistry.svelte';
+  import MobileDiagramPicker from '$lib/components/workspace/MobileDiagramPicker.svelte';
+  import { addFocusedDiagramBranch } from '$lib/util/branchActions';
   import { finishConnectionCreation } from '$lib/util/connectionEditor.svelte';
   import { getDiagramKeyword, type DiagramBranchRequest } from '$lib/util/diagramBranch';
   import { closeGlobalSearch, openGlobalSearch } from '$lib/util/globalSearch.svelte';
@@ -11,12 +11,12 @@
     openMobileWorkspaceSheet,
     setMobileToolMode
   } from '$lib/util/mobileWorkspace.svelte';
-  import { notify, prompt } from '$lib/util/notify';
+  import { notify } from '$lib/util/notify';
   import type { PanZoomState } from '$lib/util/panZoom';
   import {
     addArchitectureGroup,
-    addDiagramBranch,
-    inputState,
+    canRedoEdit,
+    redoLastEdit,
     resetToDefaultGraph,
     setSnapToGrid,
     validatedState
@@ -35,6 +35,7 @@
     setSelectedLocked
   } from '$lib/util/visualOperations';
   import { openWorkspacePanel } from '$lib/util/workspacePanels.svelte';
+  import { openVisualElementPicker } from '$lib/util/visualElementPicker.svelte';
   import {
     AlignCenterHorizontal,
     AlignCenterVertical,
@@ -46,7 +47,7 @@
     AlignVerticalDistributeCenter,
     BoxSelect,
     Code2,
-    Command,
+    ChartNoAxesCombined,
     Focus,
     Grid3X3,
     History as HistoryIcon,
@@ -55,8 +56,9 @@
     LockOpen,
     Palette,
     RefreshCcw,
-    Save,
+    Redo2,
     Search,
+    Shapes,
     SquareDashed,
     Trash2
   } from 'lucide-svelte';
@@ -118,16 +120,10 @@
     setMobileToolMode(enabled ? 'multi' : 'select');
   };
 
-  const saveCurrent = (): void => {
-    if (addManualEntry($state.snapshot(inputState))) notify('已保存当前图表版本。');
-    else notify('当前图表已经保存过了。');
-    close();
-  };
-
   const resetDiagram = (): void => {
-    if (!prompt('确定恢复当前图表的初始示例吗？此操作可以撤回。')) return;
     clearVisualSelection();
     resetToDefaultGraph();
+    notify('已恢复当前图表的初始状态，可用撤回恢复。');
     close();
   };
 
@@ -140,7 +136,7 @@
       notify('请先选择要扩展的元素。');
       return;
     }
-    if (!addDiagramBranch({ label: current.label, mode, sourceId: current.sourceId })) {
+    if (!addFocusedDiagramBranch({ label: current.label, mode, sourceId: current.sourceId })) {
       notify('当前选择不支持这项图表操作。');
       return;
     }
@@ -151,8 +147,16 @@
 {#if mobileWorkspace.sheet}
   <MobileSheet
     initiallyExpanded={false}
-    title={mobileWorkspace.sheet === 'align' ? '批量对齐' : '更多工具'}
-    ariaLabel={mobileWorkspace.sheet === 'align' ? '手机批量对齐面板' : '手机更多工具面板'}
+    title={mobileWorkspace.sheet === 'align'
+      ? '批量对齐'
+      : mobileWorkspace.sheet === 'diagrams'
+        ? '其他图表'
+        : '更多工具'}
+    ariaLabel={mobileWorkspace.sheet === 'align'
+      ? '手机批量对齐面板'
+      : mobileWorkspace.sheet === 'diagrams'
+        ? '手机其他图表面板'
+        : '手机更多工具面板'}
     onClose={close}>
     {#if mobileWorkspace.sheet === 'align'}
       <div class="grid max-h-[min(64dvh,520px)] grid-cols-3 gap-2 overflow-y-auto p-3">
@@ -213,6 +217,8 @@
           <AlignVerticalDistributeCenter class="size-4" />垂直等间距
         </Button>
       </div>
+    {:else if mobileWorkspace.sheet === 'diagrams'}
+      <MobileDiagramPicker onSelect={close} />
     {:else}
       <div class="max-h-[min(72dvh,620px)] overflow-y-auto p-3">
         <div class="grid grid-cols-3 gap-2">
@@ -264,13 +270,22 @@
             variant="outline"
             onclick={() => {
               close();
-              closeCommandPalette();
-              openCommandPalette();
+              openVisualElementPicker();
             }}>
-            <Command class="size-5" />命令
+            <Shapes class="size-5" />图形图标
           </Button>
-          <Button class="h-14 flex-col gap-1" variant="outline" onclick={saveCurrent}>
-            <Save class="size-5" />保存
+          <Button
+            class="h-14 flex-col gap-1"
+            variant="outline"
+            onclick={() => openMobileWorkspaceSheet('diagrams')}>
+            <ChartNoAxesCombined class="size-5" />其他图表
+          </Button>
+          <Button
+            class="h-14 flex-col gap-1"
+            variant="outline"
+            disabled={!canRedoEdit.current}
+            onclick={() => redoLastEdit()}>
+            <Redo2 class="size-5" />重做
           </Button>
           <Button
             class="h-14 flex-col gap-1"

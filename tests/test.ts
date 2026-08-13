@@ -41,7 +41,7 @@ export class EditorPage {
   }
 
   async toggleSampleDiagrams() {
-    await this.page.getByText('\u793a\u4f8b\u56fe\u8868', { exact: true }).click();
+    await this.page.getByText('图表库', { exact: true }).click();
   }
 
   async checkAndDownloadPNG(expectedSize: number) {
@@ -90,7 +90,8 @@ export class EditorPage {
   }
 
   async checkTextInView(text: string) {
-    await expect(this.view).toContainText(text);
+    await expect(this.view).toHaveAttribute('aria-busy', 'false', { timeout: 30_000 });
+    await expect(this.view).toContainText(text, { timeout: 30_000 });
   }
 
   async checkTextNotInView(text: string) {

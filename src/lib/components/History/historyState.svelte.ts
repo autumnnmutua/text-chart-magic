@@ -84,6 +84,9 @@ export const historyState = {
   },
   get mode(): HistoryType {
     return mode.value;
+  },
+  get manualEntries(): HistoryEntry[] {
+    return manual.value;
   }
 };
 
@@ -102,50 +105,70 @@ const createEntry = (state: State, type: 'auto' | 'manual'): HistoryEntry => ({
   type
 });
 
-// Returns true if added, false if it duplicated the most recent entry.
+export type ManualSaveResult = 'failed' | 'saved' | 'unchanged';
+
 const addEntry = (
   slot: Persisted<HistoryEntry[]>,
   state: State,
   type: 'auto' | 'manual',
   maxLength?: number
-): boolean => {
+): ManualSaveResult => {
   const entries = slot.value;
   if (entries.length > 0 && stateKey(entries[0].state) === stateKey(state)) {
-    return false;
+    return 'unchanged';
   }
   const trimmed =
     maxLength && entries.length >= maxLength ? entries.slice(0, maxLength - 1) : entries;
   slot.value = [createEntry(state, type), ...trimmed];
+  if (!slot.lastWriteSucceeded) {
+    // Keep the reactive list consistent with storage when quota or browser policy blocks a save.
+    slot.value = entries;
+    return 'failed';
+  }
   logEvent('history', { action: 'save', type });
-  return true;
+  return 'saved';
 };
 
-export const addManualEntry = (state: State): boolean => addEntry(manual, state, 'manual');
+const replaceEntries = (slot: Persisted<HistoryEntry[]>, next: HistoryEntry[]): boolean => {
+  const previous = slot.value;
+  slot.value = next;
+  if (slot.lastWriteSucceeded) return true;
+  // The persisted setter updates memory before writing. Restore the visible list
+  // when storage is blocked so a reload cannot silently undo the user's action.
+  slot.value = previous;
+  return false;
+};
+
+export const saveManualEntry = (state: State): ManualSaveResult =>
+  addEntry(manual, state, 'manual');
+
+export const addManualEntry = (state: State): boolean => saveManualEntry(state) === 'saved';
 
 export const addAutoEntry = (state: State): boolean =>
-  addEntry(auto, state, 'auto', MAX_AUTO_HISTORY_LENGTH);
+  addEntry(auto, state, 'auto', MAX_AUTO_HISTORY_LENGTH) === 'saved';
 
 // Replaces the in-memory revisions (e.g. when a gist is loaded), assigning ids.
 export const setLoaderEntries = (entries: Optional<LoaderHistoryEntry, 'id'>[]): void => {
   loader = entries.map((entry) => ({ ...entry, id: entry.id || uuidV4() }));
 };
 
-export const removeEntry = (id: string): void => {
+export const removeEntry = (id: string): boolean => {
   const slot = slotFor(mode.value);
-  if (!slot) {
-    return;
-  }
-  slot.value = slot.value.filter((entry) => entry.id !== id);
+  if (!slot) return false;
+  const next = slot.value.filter((entry) => entry.id !== id);
+  if (next.length === slot.value.length) return false;
+  if (!replaceEntries(slot, next)) return false;
   logEvent('history', { action: 'clear', type: 'single' });
+  return true;
 };
 
-export const clearActive = (): void => {
+export const clearActive = (): boolean => {
   const slot = slotFor(mode.value);
-  if (!slot) {
-    return;
-  }
-  slot.value = [];
+  if (!slot) return false;
+  if (slot.value.length === 0) return true;
+  if (!replaceEntries(slot, [])) return false;
   logEvent('history', { action: 'clear', type: 'all' });
+  return true;
 };
 
 const isRestorableEntry = (entry: unknown): entry is HistoryEntry => {
@@ -163,6 +186,7 @@ export interface RestoreResult {
   restored: number;
   invalid: number;
   duplicates: number;
+  failed: number;
 }
 
 // Routes each uploaded entry to the store matching its own type, skipping ids
@@ -174,6 +198,8 @@ export const restoreEntries = (data: HistoryEntry[]): RestoreResult => {
     .filter((entry): entry is HistoryEntry => entry !== null);
   const invalid = data.length - valid.length;
   let restored = 0;
+  let duplicates = 0;
+  let failed = 0;
 
   const slots: [HistoryType, Persisted<HistoryEntry[]>][] = [
     ['auto', auto],
@@ -189,17 +215,21 @@ export const restoreEntries = (data: HistoryEntry[]): RestoreResult => {
       true
     >;
     const fresh = incoming.filter(({ id }) => {
-      if (seenIDs[id]) return false;
+      if (seenIDs[id]) {
+        duplicates += 1;
+        return false;
+      }
       seenIDs[id] = true;
       return true;
     });
-    restored += fresh.length;
-    slot.value = [...slot.value, ...fresh].sort((a, b) => b.time - a.time);
+    if (fresh.length === 0) continue;
+    const next = [...slot.value, ...fresh].sort((a, b) => b.time - a.time);
+    if (replaceEntries(slot, next)) restored += fresh.length;
+    else failed += fresh.length;
   }
 
-  const duplicates = valid.length - restored;
-  logEvent('history', { action: 'restore', duplicates, invalid, success: restored });
-  return { restored, invalid, duplicates };
+  logEvent('history', { action: 'restore', duplicates, failed, invalid, success: restored });
+  return { restored, invalid, duplicates, failed };
 };
 
 // One-time migration: re-reads localStorage so entries written by an older

@@ -24,6 +24,7 @@ export interface State {
   updateDiagram: boolean;
   rough: boolean;
   // All new options must be optional, as users would have old states saved
+  schemaVersion?: number;
   renderCount?: number;
   panZoom?: boolean;
   grid?: boolean;
@@ -35,6 +36,8 @@ export interface State {
   visualPositions?: Record<string, VisualPosition>;
   visualLayers?: Record<string, VisualLayerState>;
   visualConnections?: Record<string, VisualConnection>;
+  visualElements?: Record<string, VisualElement>;
+  sampleDescription?: string;
   snapToGrid?: boolean;
 }
 
@@ -85,6 +88,33 @@ export interface VisualConnection {
   stroke?: string;
   strokeWidth: number;
   target: VisualConnectionEndpoint;
+}
+
+export type VisualOverlayKind = 'icon' | 'shape';
+
+export type VisualElementShape =
+  | 'circle'
+  | 'cloud'
+  | 'cylinder'
+  | 'diamond'
+  | 'document'
+  | 'ellipse'
+  | 'person'
+  | 'rectangle'
+  | 'rounded'
+  | 'server';
+
+/** A diagram-independent SVG element that participates in the shared editor model. */
+export interface VisualElement {
+  height: number;
+  id: string;
+  kind: VisualOverlayKind;
+  label: string;
+  parentId?: string;
+  shape: VisualElementShape;
+  width: number;
+  x: number;
+  y: number;
 }
 
 export interface ValidatedState extends State {

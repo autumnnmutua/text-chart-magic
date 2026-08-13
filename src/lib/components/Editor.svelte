@@ -2,13 +2,13 @@
   import DesktopEditor from '$/components/DesktopEditor.svelte';
   import MobileEditor from '$/components/MobileEditor.svelte';
   import { TID } from '$/constants';
-  import { updateCode, updateConfig, validatedState } from '$lib/util/state.svelte';
+  import { inputState, updateCode, updateConfig, validatedState } from '$lib/util/state.svelte';
   import { debounce } from 'lodash-es';
   import ExclamationCircleIcon from '~icons/material-symbols/error-outline-rounded';
 
   const { isMobile } = $props<{ isMobile: boolean }>();
   const onUpdate = (text: string) => {
-    if (validatedState.current.editorMode === 'code') {
+    if (inputState.editorMode === 'code') {
       updateCode(text);
     } else {
       updateConfig(text);
@@ -35,7 +35,7 @@
   });
 </script>
 
-<div class="flex h-full flex-col">
+<div class="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
   {#if isMobile}
     <MobileEditor {onUpdate} />
   {:else}

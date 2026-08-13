@@ -14,6 +14,7 @@
   let activeIndex = $state(0);
   let input = $state<HTMLInputElement | null>(null);
   let previouslyOpen = false;
+  let returnFocusTo: HTMLElement | null = null;
 
   const normalizedQuery = $derived(query.trim().toLocaleLowerCase());
   const filtered = $derived(
@@ -28,9 +29,17 @@
 
   $effect(() => {
     if (commandRegistry.isPaletteOpen && !previouslyOpen) {
+      returnFocusTo = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       query = '';
       activeIndex = 0;
       requestAnimationFrame(() => input?.focus());
+    }
+    if (!commandRegistry.isPaletteOpen && previouslyOpen) {
+      const target = returnFocusTo;
+      returnFocusTo = null;
+      requestAnimationFrame(() => {
+        if (target?.isConnected && document.activeElement === document.body) target.focus();
+      });
     }
     previouslyOpen = commandRegistry.isPaletteOpen;
   });

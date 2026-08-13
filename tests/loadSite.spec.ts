@@ -69,13 +69,11 @@ test.describe('Site Loads', () => {
     });
   });
 
-  test('should prompt user to scrub unsafe config', async ({ editPage, page }) => {
-    let dialogAccepted = false;
+  test('should automatically scrub unsafe external config', async ({ editPage, page }) => {
+    let dialogOpened = false;
     page.on('dialog', async (dialog) => {
-      expect(dialog.type()).toBe('confirm');
-      expect(dialog.message()).toContain('为了安全，编辑器将移除以下高风险配置');
-      await dialog.accept();
-      dialogAccepted = true;
+      dialogOpened = true;
+      await dialog.dismiss();
     });
     await editPage.start(
       `/edit?${new URLSearchParams({
@@ -93,7 +91,7 @@ test.describe('Site Loads', () => {
       }).toString()}`
     );
     await editPage.checkTextInView('Hello');
-    await expect.poll(() => dialogAccepted).toBeTruthy();
+    expect(dialogOpened).toBe(false);
     const codeStore = await page.evaluate(() => localStorage.getItem('codeStore'));
     assert(codeStore);
     const parsedStore = JSON.parse(codeStore) as State;
@@ -107,10 +105,13 @@ test.describe('Site Loads', () => {
     expect(parsedConfig.secure).toBeUndefined();
   });
 
-  test('should show troubleshooting steps if loading fails', async ({ editPage, page }) => {
-    await editPage.start('/#/edit/eyJjb2RlIjoiZ3JhcGggVERcbiAg');
-    await page.reload({ waitUntil: 'domcontentloaded' });
-    await editPage.checkTextInView('重新检查是不是链接读取失败');
+  test('should preserve the current work if a shared link is invalid', async ({
+    editPage,
+    page
+  }) => {
+    await editPage.start('/edit#eyJjb2RlIjoiZ3JhcGggVERcbiAg');
+    await expect(page.getByText('链接中的图表数据无效或过大，当前作品没有被替换。')).toBeVisible();
+    await editPage.checkTextInView('输入中文想法');
   });
 });
 

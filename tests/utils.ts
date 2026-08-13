@@ -1,6 +1,8 @@
 import { type Page, expect } from '@playwright/test';
 import { statSync } from 'node:fs';
 
+export const TEST_BASE_URL = process.env.PLAYWRIGHT_BASE_URL ?? 'http://localhost:3000';
+
 export interface EditorOptions {
   bottom?: boolean;
   newline?: boolean;
@@ -64,6 +66,7 @@ export async function setEditorCode(
       `Editor input was replaced before the expected source could persist. Current source: ${current ?? '<missing>'}`
     );
   }
+  if (!waitForRender || !(await page.locator('#view').isVisible())) return;
   if (hadPreviousSvg) {
     await page.waitForFunction(
       ({ expected, marker }) => {
