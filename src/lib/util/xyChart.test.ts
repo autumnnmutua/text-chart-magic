@@ -1,45 +1,39 @@
 import { describe, expect, it } from 'vitest';
 import { parse } from './mermaid';
 import {
-  addXYCategory,
   addXYSeries,
-  moveXYCategory,
   moveXYSeries,
   parseXYChart,
   parseXYSeriesValues,
-  removeXYCategory,
   removeXYSeries,
   updateXYAxis,
-  updateXYCategory,
-  updateXYSeries,
-  updateXYValue,
-  updateXYXAxis
+  updateXYSeries
 } from './xyChart';
 
 const example = `xychart-beta
   title "月度订单趋势"
-  x-axis "月份（单位：月）" ["一月", "二月", "三月"]
-  y-axis "订单数量（单位：单）" 0 --> 1200
+  x-axis ["一月", "二月", "三月"]
+  y-axis "订单数量" 0 --> 1200
   bar "实际订单" [520, 610, 720]
   line "计划订单" [500, 640, 700]
 `;
 
 describe('xyChart', () => {
-  it('parses horizontal and vertical axis metadata, units and named series', () => {
+  it('parses axis metadata and named vertical series', () => {
     expect(parseXYChart(example)).toMatchObject({
       series: [
         { label: '实际订单', type: 'bar', values: [520, 610, 720] },
         { label: '计划订单', type: 'line', values: [500, 640, 700] }
       ],
-      xAxis: { label: '月份', unit: '月' },
       xLabels: ['一月', '二月', '三月'],
-      yAxis: { label: '订单数量', max: 1200, min: 0, unit: '单' }
+      yAxis: { label: '订单数量', max: 1200, min: 0 }
     });
   });
 
-  it('adds, edits, reorders and removes every Y series without changing X categories', async () => {
+  it('adds, edits, reorders and removes a Y series without changing X categories', async () => {
     const added = addXYSeries(example, 'line');
-    expect(added).toContain('line "新数据系列 1" [0, 0, 0]');
+    expect(added).toContain('line "新纵坐标 1" [0, 0, 0]');
+    expect(parseXYChart(added ?? '')?.xLabels).toEqual(['一月', '二月', '三月']);
 
     const renamed = updateXYSeries(added ?? '', 2, {
       label: '退款订单',
@@ -53,64 +47,28 @@ describe('xyChart', () => {
 
     const removed = removeXYSeries(moved ?? '', 1);
     expect(removed).not.toContain('退款订单');
-    const removedToEmpty = removeXYSeries(removeXYSeries(removed ?? '', 1) ?? '', 0);
-    expect(parseXYChart(removedToEmpty ?? '')?.series).toHaveLength(0);
-    await expect(parse(removedToEmpty ?? '')).resolves.toBeDefined();
-  });
-
-  it('updates individual numbers and both axis names, units and range', async () => {
-    const xAxis = updateXYXAxis(example, { label: '结算月份', unit: '月' });
-    expect(xAxis).toContain('x-axis "结算月份（单位：月）"');
-    const yAxis = updateXYAxis(xAxis ?? '', {
-      label: '成交订单',
-      max: 1600,
-      min: 100,
-      unit: '笔'
-    });
-    expect(yAxis).toContain('y-axis "成交订单（单位：笔）" 100 --> 1600');
-    const value = updateXYValue(yAxis ?? '', 0, 1, 888.5);
-    expect(value).toContain('bar "实际订单" [520, 888.5, 720]');
-    expect(updateXYValue(example, 0, 9, 10)).toBeUndefined();
-    expect(parseXYSeriesValues('10, 20, 30', 3)).toEqual([10, 20, 30]);
-    expect(updateXYAxis(example, { max: 0, min: 100 })).toBeUndefined();
-    await expect(parse(value ?? '')).resolves.toBeDefined();
-  });
-
-  it('adds, edits, reorders and removes X categories with all values kept aligned', async () => {
-    const added = addXYCategory(example);
-    expect(added).toContain('"新分类 1"');
-    expect(added).toContain('bar "实际订单" [520, 610, 720, 0]');
-    expect(added).toContain('line "计划订单" [500, 640, 700, 0]');
-
-    const renamed = updateXYCategory(added ?? '', 3, '四月');
-    expect(renamed).toContain('"四月"');
-    const withValue = updateXYValue(renamed ?? '', 0, 3, 830);
-    const moved = moveXYCategory(withValue ?? '', 3, -1);
-    expect(parseXYChart(moved ?? '')).toMatchObject({
-      xLabels: ['一月', '二月', '四月', '三月'],
-      series: [{ values: [520, 610, 830, 720] }, { values: [500, 640, 0, 700] }]
-    });
-    const removed = removeXYCategory(moved ?? '', 1);
-    expect(parseXYChart(removed ?? '')).toMatchObject({
-      xLabels: ['一月', '四月', '三月'],
-      series: [{ values: [520, 830, 720] }, { values: [500, 0, 700] }]
-    });
+    expect(removed).toContain('x-axis ["一月", "二月", "三月"]');
     await expect(parse(removed ?? '')).resolves.toBeDefined();
   });
 
-  it('keeps legacy unnamed series and axes editable', () => {
+  it('updates the Y-axis title and range and rejects invalid value counts', async () => {
+    const updated = updateXYAxis(example, { label: '成交订单', max: 1600, min: 100 });
+    expect(updated).toContain('y-axis "成交订单" 100 --> 1600');
+    expect(parseXYSeriesValues('10, 20, 30', 3)).toEqual([10, 20, 30]);
+    expect(parseXYSeriesValues('10, 20', 3)).toBeUndefined();
+    expect(updateXYAxis(example, { max: 0, min: 100 })).toBeUndefined();
+    await expect(parse(updated ?? '')).resolves.toBeDefined();
+  });
+
+  it('keeps legacy unnamed series editable and upgrades them when renamed', () => {
     const legacy = `xychart-beta
   x-axis ["A", "B"]
   bar [1, 2]
   line [2, 3]`;
-    expect(parseXYChart(legacy)).toMatchObject({
-      xAxis: { label: '横坐标', unit: '' },
-      yAxis: { label: '纵坐标', unit: '' },
-      series: [{ label: '柱状系列 1' }, { label: '折线系列 1' }]
-    });
+    expect(parseXYChart(legacy)?.series.map(({ label }) => label)).toEqual([
+      '柱状系列 1',
+      '折线系列 1'
+    ]);
     expect(updateXYSeries(legacy, 0, { label: '收入' })).toContain('bar "收入" [1, 2]');
-    expect(updateXYXAxis(legacy, { label: '季度', unit: '季' })).toContain(
-      'x-axis "季度（单位：季）" ["A", "B"]'
-    );
   });
 });

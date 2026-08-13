@@ -10,16 +10,11 @@ export interface XYSeries {
   values: number[];
 }
 
-export interface XYAxisTitle {
-  label: string;
-  unit: string;
-}
-
 export interface XYChartModel {
   series: XYSeries[];
-  xAxis: XYAxisTitle;
   xLabels: string[];
-  yAxis: XYAxisTitle & {
+  yAxis: {
+    label: string;
     max: number;
     min: number;
   };
@@ -33,13 +28,10 @@ export interface XYSeriesUpdate {
 
 const numberPattern = String.raw`-?(?:\d+(?:\.\d+)?|\.\d+)`;
 const seriesPattern = /^([ \t]*)(bar|line)(?:\s+(.+?))?\s*\[([^\]]*)\]([ \t]*)$/gim;
-const xAxisPattern =
-  /^([ \t]*x-axis)(?:\s+(?:"([^"]*)"|'([^']*)'|([^\n[]+?)))?\s*\[([^\]]*)\]([ \t]*)$/im;
 const yAxisPattern = new RegExp(
   String.raw`^([ \t]*y-axis\s+)(?:(?:"([^"]*)"|'([^']*)'|(.+?))\s+)?(${numberPattern})\s*-->\s*(${numberPattern})([ \t]*)$`,
   'im'
 );
-const unitSuffixPattern = /^(.*?)\s*[（(]\s*单位\s*[：:]\s*(.*?)\s*[）)]\s*$/;
 
 const isXYChart = (code: string): boolean => /^\s*xychart-beta\b/im.test(code);
 
@@ -57,22 +49,6 @@ const stripQuotes = (value = ''): string => {
 
 const quoteLabel = (value: string): string =>
   `"${value.trim().replaceAll('"', '”').slice(0, 120)}"`;
-
-const parseAxisTitle = (value: string | undefined, fallback: string): XYAxisTitle => {
-  const title = stripQuotes(value) || fallback;
-  const unitMatch = title.match(unitSuffixPattern);
-  if (!unitMatch) return { label: title, unit: '' };
-  return {
-    label: unitMatch[1].trim() || fallback,
-    unit: unitMatch[2].trim()
-  };
-};
-
-const formatAxisTitle = ({ label, unit }: XYAxisTitle): string => {
-  const normalizedLabel = label.trim();
-  const normalizedUnit = unit.trim();
-  return normalizedUnit ? `${normalizedLabel}（单位：${normalizedUnit}）` : normalizedLabel;
-};
 
 const parseNumberList = (value: string): number[] =>
   value
@@ -125,28 +101,8 @@ const formatSeries = (
     .map(formatNumber)
     .join(', ')}]${suffix}`;
 
-const formatXAxis = (
-  prefix: string,
-  axis: XYAxisTitle,
-  labels: readonly string[],
-  suffix = ''
-): string =>
-  `${prefix} ${quoteLabel(formatAxisTitle(axis))} [${labels.map(quoteLabel).join(', ')}]${suffix}`;
-
 const replaceRange = (code: string, start: number, end: number, value: string): string =>
   `${code.slice(0, start)}${value}${code.slice(end)}`;
-
-const replaceRanges = (
-  code: string,
-  replacements: readonly { end: number; start: number; value: string }[]
-): string =>
-  [...replacements]
-    .sort((left, right) => right.start - left.start)
-    .reduce(
-      (current, replacement) =>
-        replaceRange(current, replacement.start, replacement.end, replacement.value),
-      code
-    );
 
 const removeLineRange = (code: string, start: number, end: number): string => {
   let nextEnd = end;
@@ -159,60 +115,14 @@ const removeLineRange = (code: string, start: number, end: number): string => {
 const uniqueSeriesLabel = (model: XYChartModel): string => {
   const used = new Set(model.series.map(({ label }) => label.trim().toLocaleLowerCase()));
   let index = 1;
-  while (used.has(`新数据系列 ${index}`.toLocaleLowerCase())) index += 1;
-  return `新数据系列 ${index}`;
+  while (used.has(`新纵坐标 ${index}`.toLocaleLowerCase())) index += 1;
+  return `新纵坐标 ${index}`;
 };
-
-const uniqueCategoryLabel = (model: XYChartModel): string => {
-  const used = new Set(model.xLabels.map((label) => label.trim().toLocaleLowerCase()));
-  let index = 1;
-  while (used.has(`新分类 ${index}`.toLocaleLowerCase())) index += 1;
-  return `新分类 ${index}`;
-};
-
-const getXAxisMatch = (code: string): RegExpExecArray | null => xAxisPattern.exec(code);
-
-const replaceXAxis = (
-  code: string,
-  model: XYChartModel,
-  axis: XYAxisTitle,
-  labels: readonly string[]
-): string | undefined => {
-  if (!axis.label.trim() || labels.length === 0 || labels.some((label) => !label.trim())) {
-    return undefined;
-  }
-  const match = getXAxisMatch(code);
-  const line = formatXAxis(match?.[1] ?? '  x-axis', axis, labels, match?.[6] ?? '');
-  if (match) return replaceRange(code, match.index, match.index + match[0].length, line);
-  const yAxis = yAxisPattern.exec(code);
-  const insertionPoint = yAxis?.index ?? model.series[0]?.start ?? code.length;
-  return `${code.slice(0, insertionPoint)}${line}\n${code.slice(insertionPoint)}`;
-};
-
-const replaceSeriesValues = (
-  code: string,
-  model: XYChartModel,
-  transform: (values: readonly number[], series: XYSeries) => number[]
-): string =>
-  replaceRanges(
-    code,
-    model.series.map((series) => ({
-      end: series.end,
-      start: series.start,
-      value: formatSeries(
-        series.raw.match(/^[ \t]*/)?.[0] ?? '',
-        series.type,
-        series.label,
-        transform(series.values, series),
-        series.raw.match(/[ \t]*$/)?.[0] ?? ''
-      )
-    }))
-  );
 
 export const parseXYChart = (code: string): XYChartModel | undefined => {
   if (!isXYChart(code)) return undefined;
 
-  const xAxis = getXAxisMatch(code);
+  const xAxis = /^\s*x-axis\s*\[([^\]]*)\]/im.exec(code);
   const yAxis = yAxisPattern.exec(code);
   const series: XYSeries[] = [];
   let barIndex = 0;
@@ -238,10 +148,9 @@ export const parseXYChart = (code: string): XYChartModel | undefined => {
   const max = Number(yAxis?.[6] ?? 100);
   return {
     series,
-    xAxis: parseAxisTitle(xAxis?.[2] ?? xAxis?.[3] ?? xAxis?.[4], '横坐标'),
-    xLabels: xAxis ? parseTextList(xAxis[5]) : [],
+    xLabels: xAxis ? parseTextList(xAxis[1]) : [],
     yAxis: {
-      ...parseAxisTitle(yAxis?.[2] ?? yAxis?.[3] ?? yAxis?.[4], '纵坐标'),
+      label: (yAxis?.[2] ?? yAxis?.[3] ?? yAxis?.[4] ?? '纵坐标').trim(),
       max: Number.isFinite(max) ? max : 100,
       min: Number.isFinite(min) ? min : 0
     }
@@ -277,8 +186,7 @@ export const updateXYSeries = (
   if (
     !nextLabel ||
     nextValues.length === 0 ||
-    nextValues.some((value) => !Number.isFinite(value)) ||
-    (model.xLabels.length > 0 && nextValues.length !== model.xLabels.length)
+    nextValues.some((value) => !Number.isFinite(value))
   ) {
     return undefined;
   }
@@ -292,29 +200,9 @@ export const updateXYSeries = (
   );
 };
 
-export const updateXYValue = (
-  code: string,
-  seriesIndex: number,
-  categoryIndex: number,
-  value: number
-): string | undefined => {
-  if (!Number.isFinite(value)) return undefined;
-  const model = parseXYChart(code);
-  const series = model?.series[seriesIndex];
-  if (!model || !series || categoryIndex < 0 || categoryIndex >= model.xLabels.length) {
-    return undefined;
-  }
-  const values = Array.from(
-    { length: model.xLabels.length },
-    (_, index) => series.values[index] ?? 0
-  );
-  values[categoryIndex] = value;
-  return updateXYSeries(code, seriesIndex, { values });
-};
-
 export const removeXYSeries = (code: string, index: number): string | undefined => {
   const model = parseXYChart(code);
-  if (!model) return undefined;
+  if (!model || model.series.length <= 1) return undefined;
   const series = model.series[index];
   return series ? removeLineRange(code, series.start, series.end) : undefined;
 };
@@ -339,95 +227,23 @@ export const moveXYSeries = (
   return `${nextCode}${code.slice(cursor)}`;
 };
 
-export const updateXYXAxis = (code: string, update: Partial<XYAxisTitle>): string | undefined => {
-  const model = parseXYChart(code);
-  if (!model) return undefined;
-  return replaceXAxis(
-    code,
-    model,
-    {
-      label: (update.label ?? model.xAxis.label).trim(),
-      unit: (update.unit ?? model.xAxis.unit).trim()
-    },
-    model.xLabels
-  );
-};
-
 export const updateXYAxis = (
   code: string,
   update: Partial<XYChartModel['yAxis']>
 ): string | undefined => {
   const model = parseXYChart(code);
   if (!model) return undefined;
-  const axisTitle = {
-    label: (update.label ?? model.yAxis.label).trim(),
-    unit: (update.unit ?? model.yAxis.unit).trim()
-  };
+  const label = (update.label ?? model.yAxis.label).trim();
   const min = update.min ?? model.yAxis.min;
   const max = update.max ?? model.yAxis.max;
-  if (!axisTitle.label || !Number.isFinite(min) || !Number.isFinite(max) || min >= max) {
-    return undefined;
-  }
+  if (!label || !Number.isFinite(min) || !Number.isFinite(max) || min >= max) return undefined;
   const axis = yAxisPattern.exec(code);
-  const line = `${axis?.[1] ?? '  y-axis '}${quoteLabel(formatAxisTitle(axisTitle))} ${formatNumber(min)} --> ${formatNumber(max)}${axis?.[7] ?? ''}`;
+  const line = `${axis?.[1] ?? '  y-axis '}${quoteLabel(label)} ${formatNumber(min)} --> ${formatNumber(max)}${axis?.[7] ?? ''}`;
   if (axis) return replaceRange(code, axis.index, axis.index + axis[0].length, line);
   const firstSeries = model.series[0];
   if (firstSeries)
     return `${code.slice(0, firstSeries.start)}${line}\n${code.slice(firstSeries.start)}`;
   return `${code.trimEnd()}\n${line}\n`;
-};
-
-export const updateXYCategory = (
-  code: string,
-  index: number,
-  label: string
-): string | undefined => {
-  const model = parseXYChart(code);
-  if (!model || !model.xLabels[index] || !label.trim()) return undefined;
-  const labels = [...model.xLabels];
-  labels[index] = label.trim();
-  return replaceXAxis(code, model, model.xAxis, labels);
-};
-
-export const addXYCategory = (code: string): string | undefined => {
-  const model = parseXYChart(code);
-  if (!model) return undefined;
-  const labels = [...model.xLabels, uniqueCategoryLabel(model)];
-  const withValues = replaceSeriesValues(code, model, (values) => [...values, 0]);
-  const nextModel = parseXYChart(withValues);
-  return nextModel ? replaceXAxis(withValues, nextModel, model.xAxis, labels) : undefined;
-};
-
-export const removeXYCategory = (code: string, index: number): string | undefined => {
-  const model = parseXYChart(code);
-  if (!model || model.xLabels.length <= 1 || !model.xLabels[index]) return undefined;
-  const labels = model.xLabels.filter((_, categoryIndex) => categoryIndex !== index);
-  const withValues = replaceSeriesValues(code, model, (values) =>
-    values.filter((_, categoryIndex) => categoryIndex !== index)
-  );
-  const nextModel = parseXYChart(withValues);
-  return nextModel ? replaceXAxis(withValues, nextModel, model.xAxis, labels) : undefined;
-};
-
-export const moveXYCategory = (
-  code: string,
-  index: number,
-  direction: -1 | 1
-): string | undefined => {
-  const model = parseXYChart(code);
-  const targetIndex = index + direction;
-  if (!model || !model.xLabels[index] || !model.xLabels[targetIndex]) return undefined;
-  const labels = [...model.xLabels];
-  [labels[index], labels[targetIndex]] = [labels[targetIndex], labels[index]];
-  const withValues = replaceSeriesValues(code, model, (values) => {
-    const reordered = Array.from({ length: model.xLabels.length }, (_, valueIndex) =>
-      values[valueIndex] === undefined ? 0 : values[valueIndex]
-    );
-    [reordered[index], reordered[targetIndex]] = [reordered[targetIndex], reordered[index]];
-    return reordered;
-  });
-  const nextModel = parseXYChart(withValues);
-  return nextModel ? replaceXAxis(withValues, nextModel, model.xAxis, labels) : undefined;
 };
 
 export const parseXYSeriesValues = (value: string, expectedCount = 0): number[] | undefined => {

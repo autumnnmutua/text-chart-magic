@@ -1,6 +1,6 @@
 {
   "name": "text-chart-magic",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "面向桌面端和移动端的中文可视化图表编辑器，支持 Mermaid 源码与画布交互编辑。",
   "private": true,
   "type": "module",

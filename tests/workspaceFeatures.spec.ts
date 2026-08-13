@@ -541,12 +541,11 @@ test.describe('统一工作区能力', () => {
   });
 
   test('XY 图纵坐标系列可增删改排序并在手机横竖屏保持可用', async ({ browser, page }) => {
-    test.setTimeout(90_000);
     const code = [
       'xychart-beta',
       '  title "季度订单"',
-      '  x-axis "月份（单位：月）" ["一月", "二月", "三月"]',
-      '  y-axis "订单数（单位：单）" 0 --> 100',
+      '  x-axis ["一月", "二月", "三月"]',
+      '  y-axis "订单数" 0 --> 100',
       '  bar "实际" [20, 30, 40]',
       '  line "计划" [25, 35, 45]'
     ].join('\n');
@@ -561,41 +560,16 @@ test.describe('统一工作区能力', () => {
     await editor.getByRole('button', { name: '添加折线纵坐标系列' }).click();
     await editor.getByLabel('纵坐标系列 3 名称').fill('退款');
     await editor.getByLabel('纵坐标系列 3 名称').press('Enter');
-    await expect
-      .poll(async () => String((await storedState(page)).code ?? ''))
-      .toContain('line "退款" [0, 0, 0]');
-    await editor.getByLabel('纵坐标系列 3 横坐标 1 数值').fill('3');
-    await editor.getByLabel('纵坐标系列 3 横坐标 1 数值').press('Enter');
-    await editor.getByLabel('纵坐标系列 3 横坐标 2 数值').fill('5');
-    await editor.getByLabel('纵坐标系列 3 横坐标 2 数值').press('Enter');
-    await editor.getByLabel('纵坐标系列 3 横坐标 3 数值').fill('4');
-    await editor.getByLabel('纵坐标系列 3 横坐标 3 数值').press('Enter');
-    await editor.getByLabel('横坐标轴名称').fill('结算月份');
-    await editor.getByLabel('横坐标轴名称').press('Enter');
-    await editor.getByLabel('横坐标单位').fill('月');
-    await editor.getByLabel('横坐标单位').press('Enter');
+    await editor.getByLabel('纵坐标系列 3 数值').fill('3, 5, 4');
+    await editor.getByLabel('纵坐标系列 3 数值').press('Enter');
     await editor.getByLabel('纵坐标轴名称').fill('订单量');
     await editor.getByLabel('纵坐标轴名称').press('Enter');
-    await editor.getByLabel('纵坐标单位').fill('笔');
-    await editor.getByLabel('纵坐标单位').press('Enter');
-    await editor.getByRole('button', { name: '添加横坐标' }).click();
-    await editor.getByLabel('横坐标 4 名称').fill('四月');
-    await editor.getByLabel('横坐标 4 名称').press('Enter');
-    await editor.getByLabel('纵坐标系列 3 横坐标 4 数值').fill('8');
-    await editor.getByLabel('纵坐标系列 3 横坐标 4 数值').press('Enter');
-    await editor.getByRole('button', { name: '删除横坐标 2' }).click();
     await editor.getByRole('button', { name: '上移纵坐标系列 3' }).click();
     await editor.getByRole('button', { name: '删除纵坐标系列 3' }).click();
 
     await expect
       .poll(async () => String((await storedState(page)).code ?? ''))
-      .toContain('line "退款" [3, 4, 8]');
-    await expect
-      .poll(async () => String((await storedState(page)).code ?? ''))
-      .toContain('x-axis "结算月份（单位：月）" ["一月", "三月", "四月"]');
-    await expect
-      .poll(async () => String((await storedState(page)).code ?? ''))
-      .toContain('y-axis "订单量（单位：笔）" 0 --> 100');
+      .toContain('line "退款" [3, 5, 4]');
     await expect
       .poll(async () => String((await storedState(page)).code ?? ''))
       .not.toContain('line "计划"');
@@ -612,8 +586,6 @@ test.describe('统一工作区能力', () => {
     await page.getByRole('button', { name: '图层与大纲' }).click();
     editor = page.getByTestId('xy-series-editor');
     await expect(editor.getByLabel('纵坐标轴名称')).toHaveValue('订单量');
-    await expect(editor.getByLabel('纵坐标单位')).toHaveValue('笔');
-    await expect(editor.getByLabel('横坐标轴名称')).toHaveValue('结算月份');
     await expect(editor.getByLabel('纵坐标系列 2 名称')).toHaveValue('退款');
 
     const context = await browser.newContext({
@@ -643,13 +615,6 @@ test.describe('统一工作区能力', () => {
       await expect
         .poll(async () => String((await storedState(mobilePage)).code ?? ''))
         .toContain('bar "移动端新增" [0, 0, 0]');
-      await mobileEditor.getByLabel('纵坐标系列 3 横坐标 1 数值').fill('12');
-      await mobileEditor.getByLabel('纵坐标系列 3 横坐标 1 数值').press('Enter');
-      await mobileEditor.getByLabel('纵坐标单位').fill('单');
-      await mobileEditor.getByLabel('纵坐标单位').press('Enter');
-      await expect
-        .poll(async () => String((await storedState(mobilePage)).code ?? ''))
-        .toContain('bar "移动端新增" [12, 0, 0]');
       expect(
         await mobilePage.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)
       ).toBe(true);
