@@ -1,18 +1,18 @@
 {
   "short_name": "图表工作台",
   "name": "图表工作台",
-	"icons": [
-		{
-			"src": "/favicon.png",
-			"type": "image/png",
-			"sizes": "512x512"
-		}
-	],
-	"start_url": "/edit",
-	"background_color": "#fff7ed",
-	"display": "standalone",
-	"scope": "/edit",
-	"theme_color": "#f97316",
-	"description": "中文图表与可视化编辑器。",
-	"orientation": "natural"
+  "icons": [
+    {
+      "src": "./favicon.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": "./edit",
+  "background_color": "#fff7ed",
+  "display": "standalone",
+  "scope": "./",
+  "theme_color": "#f97316",
+  "description": "中文图表与可视化编辑器。",
+  "orientation": "natural"
 }

@@ -2,7 +2,7 @@
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { notify } from '$lib/util/notify';
-  import { updateCodeInteraction, validatedState } from '$lib/util/state.svelte';
+  import { inputState, updateCodeInteraction, validatedState } from '$lib/util/state.svelte';
   import {
     addXYSeries,
     moveXYSeries,
@@ -15,10 +15,15 @@
   } from '$lib/util/xyChart';
   import { BarChart3, ChevronDown, ChevronUp, LineChart, Plus, Trash2 } from 'lucide-svelte';
 
-  const model = $derived(parseXYChart(validatedState.current.code));
+  const currentCode = (): string =>
+    parseXYChart(inputState.code) ? inputState.code : validatedState.current.code;
+
+  const model = $derived(
+    parseXYChart(inputState.code) ?? parseXYChart(validatedState.current.code)
+  );
 
   const commit = (nextCode: string | undefined, successMessage: string): void => {
-    if (!nextCode || nextCode === validatedState.current.code) {
+    if (!nextCode || nextCode === inputState.code) {
       notify('纵坐标修改无效，请检查名称、范围或数值数量。');
       return;
     }
@@ -27,16 +32,13 @@
   };
 
   const addSeries = (type: XYSeriesType): void =>
-    commit(addXYSeries(validatedState.current.code, type), '已添加纵坐标系列，可撤回恢复。');
+    commit(addXYSeries(currentCode(), type), '已添加纵坐标系列，可撤回恢复。');
 
   const renameSeries = (index: number, value: string): void =>
-    commit(
-      updateXYSeries(validatedState.current.code, index, { label: value }),
-      '纵坐标名称已更新。'
-    );
+    commit(updateXYSeries(currentCode(), index, { label: value }), '纵坐标名称已更新。');
 
   const changeSeriesType = (index: number, type: XYSeriesType): void =>
-    commit(updateXYSeries(validatedState.current.code, index, { type }), '系列类型已更新。');
+    commit(updateXYSeries(currentCode(), index, { type }), '系列类型已更新。');
 
   const changeSeriesValues = (index: number, value: string): void => {
     const expectedCount = model?.xLabels.length ?? 0;
@@ -49,11 +51,11 @@
       );
       return;
     }
-    commit(updateXYSeries(validatedState.current.code, index, { values }), '纵坐标数值已更新。');
+    commit(updateXYSeries(currentCode(), index, { values }), '纵坐标数值已更新。');
   };
 
   const changeAxis = (update: { label?: string; max?: number; min?: number }): void =>
-    commit(updateXYAxis(validatedState.current.code, update), '纵坐标范围已更新。');
+    commit(updateXYAxis(currentCode(), update), '纵坐标范围已更新。');
 
   const finishOnEnter = (event: KeyboardEvent): void => {
     if (event.isComposing || event.key !== 'Enter') return;
@@ -162,8 +164,7 @@
                 title="上移纵坐标系列"
                 aria-label={`上移纵坐标系列 ${index + 1}`}
                 disabled={index === 0}
-                onclick={() =>
-                  commit(moveXYSeries(validatedState.current.code, index, -1), '系列顺序已更新。')}>
+                onclick={() => commit(moveXYSeries(currentCode(), index, -1), '系列顺序已更新。')}>
                 <ChevronUp class="size-4" />
               </Button>
               <Button
@@ -173,8 +174,7 @@
                 title="下移纵坐标系列"
                 aria-label={`下移纵坐标系列 ${index + 1}`}
                 disabled={index === model.series.length - 1}
-                onclick={() =>
-                  commit(moveXYSeries(validatedState.current.code, index, 1), '系列顺序已更新。')}>
+                onclick={() => commit(moveXYSeries(currentCode(), index, 1), '系列顺序已更新。')}>
                 <ChevronDown class="size-4" />
               </Button>
               <Button
@@ -184,8 +184,7 @@
                 title="删除纵坐标系列"
                 aria-label={`删除纵坐标系列 ${index + 1}`}
                 disabled={model.series.length <= 1}
-                onclick={() =>
-                  commit(removeXYSeries(validatedState.current.code, index), '纵坐标系列已删除。')}>
+                onclick={() => commit(removeXYSeries(currentCode(), index), '纵坐标系列已删除。')}>
                 <Trash2 class="size-4" />
               </Button>
             </div>

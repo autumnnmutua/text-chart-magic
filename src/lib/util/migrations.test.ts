@@ -1,4 +1,5 @@
 import type { HistoryEntry } from '$lib/types';
+import { applyMigrations } from './migrations.svelte';
 import { describe, it, expect, beforeEach } from 'vitest';
 
 describe('migrations', () => {
@@ -13,8 +14,7 @@ describe('migrations', () => {
     );
   });
 
-  it('should migrate from v0 to v1', async () => {
-    const { applyMigrations } = await import('./migrations.svelte');
+  it('should migrate from v0 to v1', () => {
     let manualHistoryStore: HistoryEntry[] = JSON.parse(
       window.localStorage.getItem('manualHistoryStore') ?? '[]'
     ) as HistoryEntry[];
@@ -34,5 +34,5 @@ describe('migrations', () => {
     ) as HistoryEntry[];
     expect(manualHistoryStore.every(({ id }) => id !== undefined)).toBe(true);
     expect(autoHistoryStore.every(({ id }) => id !== undefined)).toBe(true);
-  }, 20_000);
+  });
 });

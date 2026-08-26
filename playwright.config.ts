@@ -15,6 +15,8 @@ export default defineConfig({
   reporter: process.env.CI ? [['github'], ['list']] : 'list',
   retries: process.env.CI ? 2 : 0,
   testDir: './tests',
+  // Local Vite dependency compilation can consume most of the default budget on a cold cache.
+  timeout: process.env.CI ? 30_000 : 60_000,
   use: {
     baseURL: externalBaseURL ?? 'http://localhost:3000',
     browserName: 'chromium',
