@@ -54,6 +54,19 @@ const collisionCount = (points: RoutePoint[], obstacles: RouteRect[]): number =>
     return total + obstacles.filter((rect) => segmentHitsRect(previous, point, rect)).length;
   }, 0);
 
+const dedupe = (points: RoutePoint[]): RoutePoint[] =>
+  points.filter(
+    (point, index) =>
+      index === 0 || point.x !== points[index - 1].x || point.y !== points[index - 1].y
+  );
+
+export interface RouteEndpointOptions {
+  /** Unit vector pointing out of the element the endpoint is attached to. */
+  direction?: RoutePoint;
+  /** The element the endpoint sits on; its anchor lies on this rectangle's edge. */
+  rect?: RouteRect;
+}
+
 export const routeOrthogonalEdge = (
   start: RoutePoint,
   end: RoutePoint,
@@ -61,8 +74,22 @@ export const routeOrthogonalEdge = (
   {
     laneOffset = 0,
     margin = 20,
-    padding = 10
-  }: { laneOffset?: number; margin?: number; padding?: number } = {}
+    padding = 10,
+    source,
+    target
+  }: {
+    laneOffset?: number;
+    margin?: number;
+    padding?: number;
+    /**
+     * Optional information about the attached elements. When given, the route
+     * first leaves each anchor outward and never cuts back through its own
+     * element. Without it an arrow from a node's top anchor could run straight
+     * through that node, putting the arrow and its label on top of the node.
+     */
+    source?: RouteEndpointOptions;
+    target?: RouteEndpointOptions;
+  } = {}
 ): RoutePoint[] => {
   if (start.x === end.x && start.y === end.y) {
     const loop = margin + Math.abs(laneOffset);
@@ -74,32 +101,73 @@ export const routeOrthogonalEdge = (
       end
     ];
   }
+  const endpointRects = [source?.rect, target?.rect].filter(
+    (rect): rect is RouteRect => rect !== undefined
+  );
   const expanded = obstacles.map((rect) => expandRect(rect, padding));
-  const middleX = (start.x + end.x) / 2 + laneOffset;
-  const middleY = (start.y + end.y) / 2 + laneOffset;
-  const left =
-    Math.min(start.x, end.x, ...expanded.map((rect) => rect.left)) - margin - Math.abs(laneOffset);
-  const right =
-    Math.max(start.x, end.x, ...expanded.map((rect) => rect.right)) + margin + Math.abs(laneOffset);
-  const top =
-    Math.min(start.y, end.y, ...expanded.map((rect) => rect.top)) - margin - Math.abs(laneOffset);
-  const bottom =
-    Math.max(start.y, end.y, ...expanded.map((rect) => rect.bottom)) +
-    margin +
-    Math.abs(laneOffset);
-  const candidates = [
-    [start, { x: middleX, y: start.y }, { x: middleX, y: end.y }, end],
-    [start, { x: start.x, y: middleY }, { x: end.x, y: middleY }, end],
-    [start, { x: start.x, y: top }, { x: end.x, y: top }, end],
-    [start, { x: start.x, y: bottom }, { x: end.x, y: bottom }, end],
-    [start, { x: left, y: start.y }, { x: left, y: end.y }, end],
-    [start, { x: right, y: start.y }, { x: right, y: end.y }, end]
-  ]
-    .map(compactPath)
+  const bounds = [...expanded, ...endpointRects];
+  const stub = (point: RoutePoint, endpoint?: RouteEndpointOptions): RoutePoint =>
+    endpoint?.direction && endpoint.rect
+      ? { x: point.x + endpoint.direction.x * margin, y: point.y + endpoint.direction.y * margin }
+      : point;
+  const from = stub(start, source);
+  const to = stub(end, target);
+  const middleX = (from.x + to.x) / 2 + laneOffset;
+  const middleY = (from.y + to.y) / 2 + laneOffset;
+  const lane = Math.abs(laneOffset);
+  const left = Math.min(from.x, to.x, ...bounds.map((rect) => rect.left)) - margin - lane;
+  const right = Math.max(from.x, to.x, ...bounds.map((rect) => rect.right)) + margin + lane;
+  const top = Math.min(from.y, to.y, ...bounds.map((rect) => rect.top)) - margin - lane;
+  const bottom = Math.max(from.y, to.y, ...bounds.map((rect) => rect.bottom)) + margin + lane;
+  const detours: [number, number, number, number][] = [[left, right, top, bottom]];
+  if (endpointRects.length > 0) {
+    // Short detours around just the two attached elements, so avoiding the
+    // source does not force a trip around the whole diagram.
+    detours.push([
+      Math.min(from.x, to.x, ...endpointRects.map((rect) => rect.left)) - margin - lane,
+      Math.max(from.x, to.x, ...endpointRects.map((rect) => rect.right)) + margin + lane,
+      Math.min(from.y, to.y, ...endpointRects.map((rect) => rect.top)) - margin - lane,
+      Math.max(from.y, to.y, ...endpointRects.map((rect) => rect.bottom)) + margin + lane
+    ]);
+  }
+  const middles: RoutePoint[][] = [
+    [
+      { x: middleX, y: from.y },
+      { x: middleX, y: to.y }
+    ],
+    [
+      { x: from.x, y: middleY },
+      { x: to.x, y: middleY }
+    ],
+    ...detours.flatMap(([detourLeft, detourRight, detourTop, detourBottom]) => [
+      [
+        { x: from.x, y: detourTop },
+        { x: to.x, y: detourTop }
+      ],
+      [
+        { x: from.x, y: detourBottom },
+        { x: to.x, y: detourBottom }
+      ],
+      [
+        { x: detourLeft, y: from.y },
+        { x: detourLeft, y: to.y }
+      ],
+      [
+        { x: detourRight, y: from.y },
+        { x: detourRight, y: to.y }
+      ]
+    ])
+  ];
+  const candidates = middles
+    .map((middle) => compactPath(dedupe([start, from, ...middle, to, end])))
     .filter((path) => laneOffset === 0 || path.length > 2);
   return candidates.sort((leftPath, rightPath) => {
     const score = (path: RoutePoint[]) =>
-      collisionCount(path, expanded) * 1_000_000 + pathLength(path) + path.length * 16;
+      // Running through an attached element is worse than grazing the padding
+      // around an unrelated one: it hides the element under the arrow.
+      (collisionCount(path, expanded) + collisionCount(path, endpointRects) * 4) * 1_000_000 +
+      pathLength(path) +
+      path.length * 16;
     return score(leftPath) - score(rightPath);
   })[0];
 };

@@ -71,3 +71,39 @@ describe('orthogonal edge routing', () => {
     expect(route[0]).toEqual(route.at(-1));
   });
 });
+
+describe('attached endpoints', () => {
+  const crossesAny = (route: RoutePoint[], rect: RouteRect) =>
+    route.slice(1).some((point, index) => segmentCrosses(route[index], point, rect));
+
+  it('leaves a top anchor upward instead of cutting through its own node', () => {
+    const source = { bottom: 16, left: 0, right: 40, top: -16 };
+    const middle = { bottom: 16, left: 48, right: 88, top: -16 };
+    const target = { bottom: 16, left: 96, right: 136, top: -16 };
+    const route = routeOrthogonalEdge({ x: 20, y: -16 }, { x: 96, y: 0 }, [middle], {
+      margin: 18,
+      padding: 8,
+      source: { direction: { x: 0, y: -1 }, rect: source },
+      target: { direction: { x: -1, y: 0 }, rect: target }
+    });
+    expect(route[0]).toEqual({ x: 20, y: -16 });
+    expect(route[1]).toEqual({ x: 20, y: -34 });
+    expect(route.at(-1)).toEqual({ x: 96, y: 0 });
+    expect(crossesAny(route, source)).toBe(false);
+    expect(crossesAny(route, target)).toBe(false);
+  });
+
+  it('takes a short detour around the source when the target is straight below it', () => {
+    const source = { bottom: 56, left: 300, right: 376, top: 8 };
+    const target = { bottom: 224, left: 300, right: 376, top: 176 };
+    const far = { bottom: 400, left: 0, right: 700, top: 300 };
+    const route = routeOrthogonalEdge({ x: 338, y: 8 }, { x: 338, y: 176 }, [far], {
+      margin: 18,
+      padding: 8,
+      source: { direction: { x: 0, y: -1 }, rect: source },
+      target: { direction: { x: 0, y: -1 }, rect: target }
+    });
+    expect(crossesAny(route, source)).toBe(false);
+    expect(Math.max(...route.map(({ x }) => x))).toBeLessThan(420);
+  });
+});

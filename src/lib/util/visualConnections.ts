@@ -399,6 +399,17 @@ const ensureMarkers = (svg: SVGSVGElement): void => {
   svg.prepend(defs);
 };
 
+const anchorDirection: Record<VisualAnchorId, { x: number; y: number }> = {
+  bottom: { x: 0, y: 1 },
+  'bottom-left': { x: 0, y: 1 },
+  'bottom-right': { x: 0, y: 1 },
+  left: { x: -1, y: 0 },
+  right: { x: 1, y: 0 },
+  top: { x: 0, y: -1 },
+  'top-left': { x: 0, y: -1 },
+  'top-right': { x: 0, y: -1 }
+};
+
 const connectionRoute = (
   connection: VisualConnection,
   anchors: readonly VisualAnchorPoint[],
@@ -407,6 +418,14 @@ const connectionRoute = (
 ) => {
   const source = anchorForEndpoint(connection.source, anchors);
   const target = anchorForEndpoint(connection.target, anchors);
+  const endpointOptions = (endpoint: VisualConnectionEndpoint) => {
+    const rect = endpoint.elementId
+      ? obstacles.find(({ elementId }) => elementId === endpoint.elementId)
+      : undefined;
+    return rect && endpoint.anchor
+      ? { direction: anchorDirection[endpoint.anchor], rect }
+      : undefined;
+  };
   return routeOrthogonalEdge(
     source,
     target,
@@ -414,7 +433,13 @@ const connectionRoute = (
       ({ elementId }) =>
         elementId !== connection.source.elementId && elementId !== connection.target.elementId
     ),
-    { laneOffset, margin: 18, padding: 8 }
+    {
+      laneOffset,
+      margin: 18,
+      padding: 8,
+      source: endpointOptions(connection.source),
+      target: endpointOptions(connection.target)
+    }
   );
 };
 

@@ -44,7 +44,9 @@
 </script>
 
 <ModeWatcher />
-<Toaster />
+<!-- Keep toasts above the bottom canvas toolbars (selection bar, 重置 bar and
+     the mobile edit bar); at the default offset they covered those buttons. -->
+<Toaster offset={{ bottom: '88px', right: '24px' }} mobileOffset={{ bottom: '96px' }} />
 
 <main class="h-dvh">
   {@render children()}

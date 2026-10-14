@@ -10,6 +10,7 @@
 /node_modules
 /snapshots.js
 /.netlify/
+/.wrangler/
 /deno.lock
 
 # Playwright

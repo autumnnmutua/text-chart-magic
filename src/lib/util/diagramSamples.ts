@@ -506,7 +506,7 @@ radar-beta
     initialSample(
       '产品能力交集',
       `venn-beta
-  title "产品能力交集"
+  title 产品能力交集
   set product["产品价值"]
   set technology["技术可行性"]
   set business["商业目标"]

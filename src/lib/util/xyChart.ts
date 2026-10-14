@@ -33,7 +33,13 @@ const yAxisPattern = new RegExp(
   'im'
 );
 
-const isXYChart = (code: string): boolean => /^\s*xychart-beta\b/im.test(code);
+// `x-axis [a, b]` and the titled form `x-axis "月份" [a, b]` are both valid Mermaid.
+const xAxisListPattern =
+  /^([ \t]*x-axis\b(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'|[^\s[\n]+))?[ \t]*\[)([^\]\n]*)(\])/im;
+
+const yAxisTitlePattern = /^[ \t]*y-axis[ \t]+(?:"([^"\n]*)"|'([^'\n]*)'|([^\n]*?))[ \t]*$/im;
+
+const isXYChart = (code: string): boolean => /^\s*xychart(?:-beta)?\b/im.test(code);
 
 const stripQuotes = (value = ''): string => {
   const trimmed = value.trim();
@@ -122,8 +128,9 @@ const uniqueSeriesLabel = (model: XYChartModel): string => {
 export const parseXYChart = (code: string): XYChartModel | undefined => {
   if (!isXYChart(code)) return undefined;
 
-  const xAxis = /^\s*x-axis\s*\[([^\]]*)\]/im.exec(code);
+  const xAxis = xAxisListPattern.exec(code);
   const yAxis = yAxisPattern.exec(code);
+  const yAxisTitle = yAxis ? undefined : yAxisTitlePattern.exec(code);
   const series: XYSeries[] = [];
   let barIndex = 0;
   let lineIndex = 0;
@@ -148,9 +155,16 @@ export const parseXYChart = (code: string): XYChartModel | undefined => {
   const max = Number(yAxis?.[6] ?? 100);
   return {
     series,
-    xLabels: xAxis ? parseTextList(xAxis[1]) : [],
+    xLabels: xAxis ? parseTextList(xAxis[2]) : [],
     yAxis: {
-      label: (yAxis?.[2] ?? yAxis?.[3] ?? yAxis?.[4] ?? '纵坐标').trim(),
+      label: (
+        yAxis?.[2] ??
+        yAxis?.[3] ??
+        yAxis?.[4] ??
+        yAxisTitle?.[1] ??
+        yAxisTitle?.[2] ??
+        (yAxisTitle?.[3] || '纵坐标')
+      ).trim(),
       max: Number.isFinite(max) ? max : 100,
       min: Number.isFinite(min) ? min : 0
     }
@@ -240,6 +254,17 @@ export const updateXYAxis = (
   const axis = yAxisPattern.exec(code);
   const line = `${axis?.[1] ?? '  y-axis '}${quoteLabel(label)} ${formatNumber(min)} --> ${formatNumber(max)}${axis?.[7] ?? ''}`;
   if (axis) return replaceRange(code, axis.index, axis.index + axis[0].length, line);
+  // A title-only `y-axis "名称"` line is replaced instead of adding a second y-axis.
+  const titleOnly = yAxisTitlePattern.exec(code);
+  if (titleOnly) {
+    const indent = /^[ \t]*/.exec(titleOnly[0])?.[0] ?? '  ';
+    return replaceRange(
+      code,
+      titleOnly.index,
+      titleOnly.index + titleOnly[0].length,
+      `${indent}y-axis ${quoteLabel(label)} ${formatNumber(min)} --> ${formatNumber(max)}`
+    );
+  }
   const firstSeries = model.series[0];
   if (firstSeries)
     return `${code.slice(0, firstSeries.start)}${line}\n${code.slice(firstSeries.start)}`;
@@ -256,4 +281,92 @@ export const parseXYSeriesValues = (value: string, expectedCount = 0): number[] 
   if (values.some((item) => !Number.isFinite(item))) return undefined;
   if (expectedCount > 0 && values.length !== expectedCount) return undefined;
   return values;
+};
+
+const splitListEntries = (value: string): string[] => {
+  const entries: string[] = [];
+  let current = '';
+  let quote = '';
+  for (const character of value) {
+    if (quote) {
+      current += character;
+      if (character === quote) quote = '';
+      continue;
+    }
+    if (character === '"' || character === "'") quote = character;
+    if (character === ',') {
+      entries.push(current.trim());
+      current = '';
+      continue;
+    }
+    current += character;
+  }
+  if (current.trim() || entries.length > 0) entries.push(current.trim());
+  return entries.filter(Boolean);
+};
+
+/**
+ * Rewrites the value list of every bar/line series, including titled series
+ * such as `bar "实际订单" [1, 2]`, which the old `^(bar|line)\s*\[` patterns missed.
+ */
+const mapXYSeriesValues = (
+  code: string,
+  transform: (values: string[], series: XYSeries) => string[]
+): string => {
+  const model = parseXYChart(code);
+  if (!model) return code;
+  let cursor = 0;
+  let nextCode = '';
+  for (const series of model.series) {
+    const open = series.raw.lastIndexOf('[');
+    const close = series.raw.lastIndexOf(']');
+    if (open < 0 || close < open) continue;
+    const values = splitListEntries(series.raw.slice(open + 1, close));
+    const nextRaw = `${series.raw.slice(0, open + 1)}${transform(values, series).join(', ')}${series.raw.slice(close)}`;
+    nextCode += code.slice(cursor, series.start) + nextRaw;
+    cursor = series.end;
+  }
+  return nextCode + code.slice(cursor);
+};
+
+/** Appends a horizontal category and keeps every series the same length. */
+export const addXYCategory = (code: string, label: string): string | undefined => {
+  const model = parseXYChart(code);
+  if (!model) return undefined;
+  const quoted = quoteLabel(label);
+  const axis = xAxisListPattern.exec(code);
+  let nextCode: string;
+  if (axis) {
+    const entries = splitListEntries(axis[2]);
+    nextCode = `${code.slice(0, axis.index)}${axis[1]}${[...entries, quoted].join(', ')}${axis[3]}${code.slice(axis.index + axis[0].length)}`;
+  } else if (/^\s*x-axis\b/im.test(code)) {
+    // Numeric x-axis (`x-axis 0 --> 10`): the series simply gains one more point.
+    nextCode = code;
+  } else {
+    const count = Math.max(0, ...model.series.map(({ values }) => values.length));
+    const labels = Array.from({ length: count }, (_value, index) => `"${index + 1}"`);
+    const line = `  x-axis [${[...labels, quoted].join(', ')}]`;
+    const firstSeries = model.series[0];
+    nextCode = firstSeries
+      ? `${code.slice(0, firstSeries.start)}${line}\n${code.slice(firstSeries.start)}`
+      : `${code.trimEnd()}\n${line}\n`;
+  }
+  return mapXYSeriesValues(nextCode, (values) => [...values, '0']);
+};
+
+/** Removes one horizontal category together with the matching value in every series. */
+export const removeXYCategory = (code: string, label: string): string | undefined => {
+  const axis = xAxisListPattern.exec(code);
+  if (!axis) return undefined;
+  const entries = splitListEntries(axis[2]);
+  const wanted = label.replace(/\s+/g, ' ').trim();
+  const index = entries.findIndex(
+    (entry) => stripQuotes(entry).replace(/\s+/g, ' ').trim() === wanted
+  );
+  if (index < 0 || entries.length <= 1) return undefined;
+  const nextEntries = entries.filter((_entry, entryIndex) => entryIndex !== index);
+  const nextCode = `${code.slice(0, axis.index)}${axis[1]}${nextEntries.join(', ')}${axis[3]}${code.slice(axis.index + axis[0].length)}`;
+  return mapXYSeriesValues(nextCode, (values) =>
+    values.filter((_value, valueIndex) => valueIndex !== index)
+  );
 };

@@ -62,35 +62,38 @@ const placementFor = (
     )
   });
   const gap = 24;
+  // Leave room between a parent and its new branch for the arrow and its
+  // relation label; with 24px the label was drawn on top of both shapes.
+  const linkGap = 72;
   const candidates: { x: number; y: number }[] = [];
   if (parentRect) {
     const centerX = parentRect.left + parentRect.width / 2;
     const centerY = parentRect.top + parentRect.height / 2;
-    const verticalStep = Math.max(clientHeight + gap, parentRect.height * 0.75);
-    const horizontalStep = Math.max(clientWidth + gap, parentRect.width * 0.75);
+    const verticalStep = Math.max(clientHeight + linkGap, parentRect.height * 0.75);
+    const horizontalStep = Math.max(clientWidth + linkGap, parentRect.width * 0.75);
     const lanes = [0, 1, -1, 2, -2, 3, -3];
     for (const lane of lanes) {
       candidates.push({
-        x: parentRect.right + gap + clientWidth / 2,
+        x: parentRect.right + linkGap + clientWidth / 2,
         y: centerY + lane * verticalStep
       });
     }
     for (const lane of lanes) {
       candidates.push({
-        x: parentRect.left - gap - clientWidth / 2,
+        x: parentRect.left - linkGap - clientWidth / 2,
         y: centerY + lane * verticalStep
       });
     }
     for (const lane of lanes) {
       candidates.push({
         x: centerX + lane * horizontalStep,
-        y: parentRect.bottom + gap + clientHeight / 2
+        y: parentRect.bottom + linkGap + clientHeight / 2
       });
     }
     for (const lane of lanes) {
       candidates.push({
         x: centerX + lane * horizontalStep,
-        y: parentRect.top - gap - clientHeight / 2
+        y: parentRect.top - linkGap - clientHeight / 2
       });
     }
   } else {

@@ -1,6 +1,8 @@
 import { getDiagramKeyword } from './diagramBranch';
 import { ARCHITECTURE_GROUP_PREFIX, removeArchitectureGroupCode } from './architectureGroups';
 import { getBlockEdges, getBlockEdgeStyleId } from './blockFreeLayout';
+import { repairGanttDependencies } from './ganttDependencies';
+import { removeXYCategory } from './xyChart';
 
 export interface VisualTextTarget {
   occurrence?: number;
@@ -342,7 +344,8 @@ export const findVisualTextRange = (
         : findVisibleTextRange(code, text, occurrence);
   if (directRange) return directRange;
   if (getDiagramKeyword(code) === 'xychart-beta') {
-    const axis = /^\s*x-axis\s*\[([^\]]*)\]/im.exec(code);
+    const axis =
+      /^\s*x-axis\b(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'|[^\s[\n]+))?[ \t]*\[([^\]\n]*)\]/im.exec(code);
     if (axis) {
       const valuesStart = axis.index + axis[0].indexOf(axis[1]);
       const entries = [...axis[1].matchAll(/[^,]+/g)];
@@ -586,17 +589,25 @@ export const replaceDiagramVisualText = (
   if (getDiagramKeyword(code) === 'zenuml') {
     const lineRange = getSourceLineRange(code, range);
     const line = code.slice(lineRange.start, lineRange.end);
-    if (/^\s*@[A-Za-z][\w<>]*\s+/i.test(line)) {
-      const safeName = nextText.trim().replace(/\W+/g, '') || currentText;
-      const nextCode = code.replace(
-        new RegExp(String.raw`\b${escapeRegExp(currentText)}\b`, 'g'),
-        safeName
-      );
+    const current = escapeRegExp(currentText.replaceAll('"', ''));
+    const participantToken = String.raw`(?:"${current}"|(?<![\p{L}\p{N}_"])${current}(?![\p{L}\p{N}_"]))`;
+    const isDeclaredParticipant = new RegExp(
+      String.raw`^[ \t]*@[A-Za-z][\w]*(?:[ \t]+<<[^>\n]*>>)?[ \t]+${participantToken}`,
+      'mu'
+    ).test(code);
+    if (/^\s*@[A-Za-z][\w<>]*\s+/i.test(line) || isDeclaredParticipant) {
+      // ZenUML accepts Unicode identifiers (顾客) and quoted names ("订单 服务").
+      // Stripping with \W used to delete every Chinese character, so renames
+      // silently did nothing in a Chinese workspace. A participant is renamed
+      // everywhere it is referenced, whichever occurrence was double-clicked.
+      const safeName = nextText.trim().replaceAll('"', '') || currentText;
+      const reference = /^[\p{L}\p{N}_]+$/u.test(safeName) ? safeName : `"${safeName}"`;
+      const nextCode = code.replace(new RegExp(participantToken, 'gu'), reference);
       return {
         code: nextCode,
         range: findVisibleTextRange(nextCode, safeName) ?? {
           start: range.start,
-          end: range.start + safeName.length
+          end: range.start + reference.length
         }
       };
     }
@@ -850,22 +861,8 @@ const removeRadarDimension = (code: string, target: VisualTextTarget): string | 
   return nextCode;
 };
 
-const removeXYDimension = (code: string, target: VisualTextTarget): string | undefined => {
-  const axis = /^(\s*x-axis\s*\[)([^\]]*)(\])/im.exec(code);
-  if (!axis) return undefined;
-  const values = axis[2].split(',').map((item) => item.trim());
-  const index = values.findIndex(
-    (item) => normalizeVisibleText(item.replace(/^"|"$/g, '')) === normalizeVisibleText(target.text)
-  );
-  if (index < 0) return undefined;
-  let nextCode = `${code.slice(0, axis.index)}${axis[1]}${removeListIndex(axis[2], index)}${axis[3]}${code.slice(axis.index + axis[0].length)}`;
-  nextCode = nextCode.replace(
-    /^(\s*(?:bar|line)\s*\[)([^\]]*)(\])/gim,
-    (_line, prefix: string, series: string, suffix: string) =>
-      `${prefix}${removeListIndex(series, index)}${suffix}`
-  );
-  return nextCode;
-};
+const removeXYDimension = (code: string, target: VisualTextTarget): string | undefined =>
+  removeXYCategory(code, normalizeVisibleText(target.text));
 
 const removeRequirementBlock = (code: string, target: VisualTextTarget): string | undefined => {
   const wanted = normalizeVisibleText(target.text).replace(/^"|"$/g, '');
@@ -1321,6 +1318,7 @@ export const removeDiagramElementCode = (
     end = nextSection >= 0 ? lineRange.end + nextSection : code.length;
   }
   const nextCode = `${code.slice(0, lineRange.start)}${code.slice(end)}`;
+  if (keyword === 'gantt') return repairGanttDependencies(code, nextCode);
   return keyword === 'packet' ? normalizePacketRanges(nextCode) : nextCode;
 };
 

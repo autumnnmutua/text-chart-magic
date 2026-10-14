@@ -334,6 +334,7 @@
   let snapGuides = $state<SnapGuide[]>([]);
   let suppressVisualClickUntil = 0;
   let suppressNextVisualClick = false;
+  let pointerDownAddedSelectionId = '';
   let handledFocusRequestId = 0;
   let handledEditRequestId = 0;
   let pendingPanZoom: Pick<State, 'pan' | 'zoom'> | undefined;
@@ -446,7 +447,10 @@
             ? {
                 ...target,
                 x: Math.min(Math.max(target.x, 12), Math.max(currentView.clientWidth - 96, 12)),
-                y: Math.min(Math.max(target.y, 12), Math.max(currentView.clientHeight - 48, 12))
+                y: Math.min(
+                  Math.max(target.y, 12),
+                  Math.max(currentView.clientHeight - ACTION_BOTTOM_RESERVE - 36, 12)
+                )
               }
             : undefined;
         branchTarget = clampTarget(branchTarget);
@@ -770,6 +774,25 @@
   const specialActionX = (x: number, width = 88): number =>
     Math.max(8, Math.min(x + 68, Math.max((view?.clientWidth ?? 180) - width, 8)));
 
+  // The 分支 / 调色 / 删除 buttons form one vertical stack (38px pitch). They used
+  // to be clamped one by one, so near the bottom edge they collapsed onto each
+  // other and slid under the floating selection toolbar, making 删除 unclickable.
+  const ACTION_STACK_PITCH = 38;
+  const ACTION_STACK_HEIGHT = ACTION_STACK_PITCH * 2 + 36;
+  const ACTION_BOTTOM_RESERVE = 72;
+
+  const actionStackX = (event: MouseEvent, rect: DOMRect): number =>
+    Math.min(Math.max(event.clientX - rect.left + 12, 12), Math.max(rect.width - 96, 12));
+
+  const actionStackTop = (event: MouseEvent, rect: DOMRect): number => {
+    const pointerY = event.clientY - rect.top;
+    const limit = rect.height - ACTION_BOTTOM_RESERVE;
+    const below = pointerY + 12;
+    if (below + ACTION_STACK_HEIGHT <= limit) return Math.max(below, 12);
+    const above = pointerY - 12 - ACTION_STACK_HEIGHT;
+    return Math.max(12, Math.min(above, limit - ACTION_STACK_HEIGHT));
+  };
+
   const showBranchButton = (event: MouseEvent, sourceId: string, label: string) => {
     if (!view || (isFlowchartState() && !sourceId)) {
       branchTarget = undefined;
@@ -779,8 +802,8 @@
     branchTarget = {
       sourceId,
       label,
-      x: Math.min(Math.max(event.clientX - rect.left + 12, 12), rect.width - 96),
-      y: Math.min(Math.max(event.clientY - rect.top + 12, 12), rect.height - 48)
+      x: actionStackX(event, rect),
+      y: actionStackTop(event, rect)
     };
   };
 
@@ -793,8 +816,8 @@
     colorTarget = {
       id: styleId,
       label: label || '选中元素',
-      x: Math.min(Math.max(event.clientX - rect.left + 12, 12), rect.width - 96),
-      y: Math.min(Math.max(event.clientY - rect.top + 50, 12), rect.height - 48)
+      x: actionStackX(event, rect),
+      y: actionStackTop(event, rect) + ACTION_STACK_PITCH
     };
   };
 
@@ -815,8 +838,8 @@
       occurrence,
       sourceId,
       styleId,
-      x: Math.min(Math.max(event.clientX - rect.left + 12, 12), rect.width - 96),
-      y: Math.min(Math.max(event.clientY - rect.top + 88, 12), rect.height - 48)
+      x: actionStackX(event, rect),
+      y: actionStackTop(event, rect) + ACTION_STACK_PITCH * 2
     };
   };
 
@@ -1284,13 +1307,32 @@
     applyVisualStyles(svg, validatedState.current.visualStyles);
   };
 
+  const CONNECTION_PREVIEW_SELECTOR = '[data-visual-id="connection-preview"]';
+
+  const isConnectionPreviewElement = (target: EventTarget | null): boolean =>
+    target instanceof Element && Boolean(target.closest(CONNECTION_PREVIEW_SELECTOR));
+
+  // While an arrow is being drawn its preview line and end handle follow the
+  // pointer, so they are always the topmost element under the cursor. Look
+  // through the preview to find the node the user actually clicked; otherwise
+  // the arrow was never attached to its target and stayed dangling.
+  const pointerTargetBelowPreview = (event: PointerEvent): EventTarget | null => {
+    if (!isConnectionPreviewElement(event.target)) return event.target;
+    return (
+      document
+        .elementsFromPoint(event.clientX, event.clientY)
+        .find((element) => !isConnectionPreviewElement(element)) ?? null
+    );
+  };
+
   const endpointForCreation = (
     svg: SVGSVGElement,
     event: PointerEvent
   ): VisualConnectionEndpoint | undefined => {
+    lastCreationEndpointInterior = false;
     const point = clientToConnectionPoint(svg, event.clientX, event.clientY);
     if (!point) return undefined;
-    const item = getVisualDocumentTarget(event.target, visualDocument.current);
+    const item = getVisualDocumentTarget(pointerTargetBelowPreview(event), visualDocument.current);
     if (!item || !isStableConnectableItem(item)) return point;
     const anchors = collectVisualAnchors(svg, visualDocument.current).filter(
       ({ elementId }) => elementId === item.id
@@ -1300,14 +1342,86 @@
         Math.hypot(point.x - left.x, point.y - left.y) -
         Math.hypot(point.x - right.x, point.y - right.y)
     )[0];
-    return nearest
-      ? {
-          anchor: nearest.anchor,
-          elementId: nearest.elementId,
-          x: nearest.x,
-          y: nearest.y
-        }
-      : point;
+    if (!nearest) return point;
+    const endpoint: VisualConnectionEndpoint = {
+      anchor: nearest.anchor,
+      elementId: nearest.elementId,
+      x: nearest.x,
+      y: nearest.y
+    };
+    // A press well inside a module (on its text, say) does not express a side;
+    // the side is chosen once both ends are known so the arrow faces its target.
+    const xs = anchors.map(({ x }) => x);
+    const ys = anchors.map(({ y }) => y);
+    const shortSide = Math.min(
+      Math.max(...xs) - Math.min(...xs),
+      Math.max(...ys) - Math.min(...ys)
+    );
+    lastCreationEndpointInterior =
+      Math.hypot(point.x - nearest.x, point.y - nearest.y) > shortSide * 0.35;
+    return endpoint;
+  };
+
+  // Plain flags rather than a WeakSet: endpoints stored in $state are proxied,
+  // so object identity is not preserved between the two presses.
+  let lastCreationEndpointInterior = false;
+  let connectionDraftSourceInterior = false;
+  const SIDE_ANCHORS = new Set(['bottom', 'left', 'right', 'top']);
+
+  const nearestSideAnchor = (
+    anchors: readonly VisualConnectionEndpoint[],
+    elementId: string,
+    toward: { x: number; y: number }
+  ): VisualConnectionEndpoint | undefined =>
+    anchors
+      .filter((anchor) => anchor.elementId === elementId && SIDE_ANCHORS.has(anchor.anchor ?? ''))
+      .sort(
+        (left, right) =>
+          Math.hypot(toward.x - left.x, toward.y - left.y) -
+          Math.hypot(toward.x - right.x, toward.y - right.y)
+      )[0];
+
+  /**
+   * Re-picks the side of endpoints that were placed by pressing inside a
+   * module. Pressing a label used to pick the top anchor on both modules, so an
+   * arrow to the module below looped around its own source.
+   */
+  const faceInteriorEndpoints = (
+    svg: SVGSVGElement,
+    source: VisualConnectionEndpoint,
+    target: VisualConnectionEndpoint,
+    sourceInterior: boolean,
+    targetInterior: boolean
+  ): [VisualConnectionEndpoint, VisualConnectionEndpoint] => {
+    if (
+      (!sourceInterior && !targetInterior) ||
+      !source.elementId ||
+      !target.elementId ||
+      source.elementId === target.elementId
+    ) {
+      return [source, target];
+    }
+    const anchors = collectVisualAnchors(svg, visualDocument.current).map(
+      ({ anchor, elementId, x, y }) => ({ anchor, elementId, x, y })
+    );
+    const center = (elementId: string) => {
+      const own = anchors.filter((anchor) => anchor.elementId === elementId);
+      return {
+        x: (Math.min(...own.map(({ x }) => x)) + Math.max(...own.map(({ x }) => x))) / 2,
+        y: (Math.min(...own.map(({ y }) => y)) + Math.max(...own.map(({ y }) => y))) / 2
+      };
+    };
+    const nextSource = sourceInterior
+      ? (nearestSideAnchor(
+          anchors,
+          source.elementId,
+          targetInterior ? center(target.elementId) : target
+        ) ?? source)
+      : source;
+    const nextTarget = targetInterior
+      ? (nearestSideAnchor(anchors, target.elementId, nextSource) ?? target)
+      : target;
+    return [nextSource, nextTarget];
   };
 
   const ensureDistinctSameNodeAnchors = (
@@ -1356,9 +1470,12 @@
 
   const startConnectionInteraction = (event: PointerEvent) => {
     if (isMobilePanMode() || !isPrimaryDragStart(event) || activeTextEdit) return;
+    const interactionTarget = connectionEditor.isCreating
+      ? pointerTargetBelowPreview(event)
+      : event.target;
     const endpointHandle =
-      event.target instanceof Element
-        ? event.target.closest<SVGCircleElement>(
+      interactionTarget instanceof Element
+        ? interactionTarget.closest<SVGCircleElement>(
             '[data-connection-endpoint], [data-connection-endpoint-hit]'
           )
         : undefined;
@@ -1388,11 +1505,17 @@
       return;
     }
     const connectionGroup =
-      event.target instanceof Element
-        ? event.target.closest<SVGGElement>('[data-visual-connection]')
+      interactionTarget instanceof Element
+        ? interactionTarget.closest<SVGGElement>('[data-visual-connection]')
         : null;
+    // Arrows have a 16px invisible hit stroke. When an arrow passes over a
+    // movable module, pressing on that module must still drag the module
+    // (touch already did this; mouse used to select the arrow instead).
+    const pressedArrowHitArea =
+      interactionTarget instanceof Element &&
+      Boolean(interactionTarget.closest('[data-connection-hit]'));
     const touchNodeUnderConnection =
-      event.pointerType === 'touch' && connectionGroup
+      (event.pointerType === 'touch' || pressedArrowHitArea) && connectionGroup
         ? document
             .elementsFromPoint(event.clientX, event.clientY)
             .map((element) => getVisualDocumentTarget(element, visualDocument.current))
@@ -1420,6 +1543,7 @@
     event.stopImmediatePropagation();
     if (!connectionDraftSource) {
       connectionDraftSource = endpoint;
+      connectionDraftSourceInterior = lastCreationEndpointInterior;
       connectionPreview = createVisualConnection(
         endpoint,
         endpoint,
@@ -1435,9 +1559,15 @@
       renderConnectionPreview(svg, connectionPreview, endpoint);
       return;
     }
-    const target = ensureDistinctSameNodeAnchors(svg, connectionDraftSource, endpoint);
-    const connection = createVisualConnection(
+    const [source, target] = faceInteriorEndpoints(
+      svg,
       connectionDraftSource,
+      ensureDistinctSameNodeAnchors(svg, connectionDraftSource, endpoint),
+      connectionDraftSourceInterior,
+      lastCreationEndpointInterior
+    );
+    const connection = createVisualConnection(
+      source,
       target,
       undefined,
       inferVisualConnectionAppearance(
@@ -1922,11 +2052,14 @@
     if (isMobile && mobileWorkspace.mode === 'multi' && !visualSelection.ids.includes(id)) {
       return;
     }
+    pointerDownAddedSelectionId = '';
     if (documentItem && !visualSelection.ids.includes(id)) {
-      selectVisualElement(documentItem, {
-        additive:
-          event.shiftKey || event.ctrlKey || event.metaKey || visualSelection.isSelectionMode
-      });
+      const additive =
+        event.shiftKey || event.ctrlKey || event.metaKey || visualSelection.isSelectionMode;
+      selectVisualElement(documentItem, { additive });
+      // The click that follows this pointerdown must not toggle the item off
+      // again; otherwise Shift/Ctrl+click could never build a multi-selection.
+      if (additive) pointerDownAddedSelectionId = id;
     }
     const selectedIds = new Set(visualSelection.ids.includes(id) ? visualSelection.ids : [id]);
     const group = visualDocument.current.filter(
@@ -2625,10 +2758,15 @@
     }
     event.preventDefault();
     event.stopPropagation();
+    const addedOnPointerDown = pointerDownAddedSelectionId;
+    pointerDownAddedSelectionId = '';
     if (documentTarget) {
       const additive =
         event.shiftKey || event.ctrlKey || event.metaKey || visualSelection.isSelectionMode;
-      selectVisualElement(documentTarget, { additive, toggle: additive });
+      selectVisualElement(documentTarget, {
+        additive,
+        toggle: additive && addedOnPointerDown !== documentTarget.id
+      });
     } else if (styleId) {
       selectVisualElement(
         { id: styleId, label: text || '选中元素', occurrence, sourceId, styleId },

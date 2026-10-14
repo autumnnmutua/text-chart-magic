@@ -2,7 +2,7 @@ import type { State } from '$/types';
 import Hammer from 'hammerjs';
 import type { Point } from 'mermaid/dist/types.js';
 import panzoom from 'svg-pan-zoom';
-import { clampViewZoom, MAX_VIEW_ZOOM, MIN_VIEW_ZOOM } from './viewport';
+import { clampViewZoom, MAX_AUTO_FIT_SCALE, MAX_VIEW_ZOOM, MIN_VIEW_ZOOM } from './viewport';
 type PanZoom = typeof panzoom;
 
 export class PanZoomState {
@@ -26,8 +26,7 @@ export class PanZoomState {
 
   public updateElement(diagramView: SVGElement, { pan, zoom }: Pick<State, 'pan' | 'zoom'>) {
     this.resizeObserver.disconnect();
-    this.pzoom?.destroy();
-    this.pzoom = undefined;
+    this.destroyPanZoom();
     this.diagramView = diagramView;
     this.isDirty = false;
     let hammer: HammerManager | undefined;
@@ -239,11 +238,39 @@ export class PanZoomState {
         this.isDirty = false;
         return;
       }
-      pzoom.zoom(Math.max(fittedZoom * 0.92, MIN_VIEW_ZOOM));
+      // Fitting a tiny diagram (one or two nodes) used to blow it up ~10x.
+      // Canvas widgets drawn in diagram units (relation labels, arrow heads,
+      // selection outlines) then became huge while new shapes, which are sized
+      // in screen pixels, looked tiny. Never auto-fit beyond MAX_AUTO_FIT_SCALE.
+      const fittedScale = pzoom.getSizes().realZoom;
+      const scaleLimit =
+        Number.isFinite(fittedScale) && fittedScale > 0
+          ? MAX_AUTO_FIT_SCALE / fittedScale
+          : Number.POSITIVE_INFINITY;
+      pzoom.zoom(Math.max(Math.min(fittedZoom * 0.92, fittedZoom * scaleLimit), MIN_VIEW_ZOOM));
       pzoom.center();
       this.isDirty = false;
     } finally {
       this.isApplyingViewport = false;
+    }
+  }
+
+  /**
+   * svg-pan-zoom's destroy() calls reset(), which fires onZoom/onPan with the
+   * previous diagram's default viewport. Those values must not be reported as a
+   * user pan/zoom, otherwise the next render restores a stale viewport and the
+   * chart jumps, shrinks or gets cropped after every edit.
+   */
+  private destroyPanZoom() {
+    const pzoom = this.pzoom;
+    this.pzoom = undefined;
+    if (!pzoom) return;
+    const wasApplyingViewport = this.isApplyingViewport;
+    this.isApplyingViewport = true;
+    try {
+      pzoom.destroy();
+    } finally {
+      this.isApplyingViewport = wasApplyingViewport;
     }
   }
 
@@ -260,8 +287,7 @@ export class PanZoomState {
 
   public destroy() {
     this.resizeObserver.disconnect();
-    this.pzoom?.destroy();
-    this.pzoom = undefined;
+    this.destroyPanZoom();
     this.diagramView = undefined;
     this.onPanZoomChange = undefined;
     this.shouldHandleCanvasGesture = undefined;

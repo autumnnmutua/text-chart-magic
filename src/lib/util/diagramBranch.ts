@@ -1,4 +1,6 @@
 /* eslint sort-keys/sort-keys-fix: off -- Strategy order follows diagram families. */
+import { addXYCategory } from './xyChart';
+
 const BRANCH_LABEL = '新分支';
 
 export interface DiagramBranchRequest {
@@ -563,25 +565,7 @@ const addRadarDimension: BranchStrategy = ({ code }) => {
   );
 };
 
-const addXYDimension: BranchStrategy = ({ code }) => {
-  const label = `"${getUniqueLabel(code)}"`;
-  let nextCode = code;
-  const axisPattern = /^(\s*x-axis\s*\[)([^\]]*)(\])/im;
-  if (axisPattern.test(nextCode)) {
-    nextCode = nextCode.replace(
-      axisPattern,
-      (_line, prefix: string, values: string, suffix: string) =>
-        `${prefix}${appendListValue(values, label)}${suffix}`
-    );
-  } else {
-    nextCode = `${nextCode.trimEnd()}\n    x-axis [${label}]\n`;
-  }
-  return nextCode.replace(
-    /^(\s*(?:bar|line)\s*\[)([^\]]*)(\])/gim,
-    (_line, prefix: string, values: string, suffix: string) =>
-      `${prefix}${appendListValue(values, '0')}${suffix}`
-  );
-};
+const addXYDimension: BranchStrategy = ({ code }) => addXYCategory(code, getUniqueLabel(code));
 
 const addTimelineBranch: BranchStrategy = ({ code, label }) => {
   const lines = code.trimEnd().split('\n');
@@ -819,12 +803,18 @@ const addZenUMLBranch: BranchStrategy = ({ code, label, sourceId }) => {
   const participant = getUniqueName(code, 'Participant');
   const step = getUniqueName(code, 'newStep');
   const wanted = normalizeLabel(label);
+  // Participants may be Unicode identifiers (顾客) or quoted names ("会员 顾客").
   const participants = [
-    ...code.matchAll(/^\s*@[A-Za-z][\w<>]*\s+(?:<<[^>]+>>\s+)?([A-Za-z][\w-]*)/gm)
+    ...code.matchAll(
+      /^\s*@[A-Za-z][\w<>]*\s+(?:<<[^>]+>>\s+)?("[^"\n]+"|[\p{L}_][\p{L}\p{N}_-]*)/gmu
+    )
   ].map((match) => match[1]);
   const caller =
-    participants.find((item) => item === sourceId || normalizeLabel(item) === wanted) ??
-    (!wanted && !sourceId ? participants[0] : undefined);
+    participants.find(
+      (item) =>
+        item === sourceId ||
+        normalizeLabel(item.replace(/^"|"$/g, '')) === wanted.replace(/^"|"$/g, '')
+    ) ?? (!wanted && !sourceId ? participants[0] : undefined);
   if (caller) return `${code.trimEnd()}\n    ${caller}.${step}()\n`;
   if (wanted || sourceId) return undefined;
   return `${code.trimEnd()}\n    @Participant ${participant}\n    ${participant}.${step}()\n`;

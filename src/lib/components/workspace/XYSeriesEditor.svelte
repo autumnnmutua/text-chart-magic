@@ -22,40 +22,102 @@
     parseXYChart(inputState.code) ?? parseXYChart(validatedState.current.code)
   );
 
-  const commit = (nextCode: string | undefined, successMessage: string): void => {
-    if (!nextCode || nextCode === inputState.code) {
-      notify('纵坐标修改无效，请检查名称、范围或数值数量。');
-      return;
+  /**
+   * Applies a source change. Returns false when the change was rejected so the
+   * caller can restore the field: inputs are one-way bound, and a rejected value
+   * used to stay on screen even though the chart and source kept the old one.
+   */
+  const commit = (
+    nextCode: string | undefined,
+    successMessage: string,
+    errorMessage = '修改无效，请检查名称、范围或数值数量。'
+  ): boolean => {
+    if (nextCode === inputState.code) return true;
+    if (!nextCode) {
+      notify(errorMessage);
+      return false;
     }
     updateCodeInteraction(nextCode, { start: true, updateDiagram: true });
     notify(successMessage);
+    return true;
   };
 
-  const addSeries = (type: XYSeriesType): void =>
+  const restore = (input: HTMLInputElement | HTMLSelectElement, value: string | number): void => {
+    input.value = String(value);
+  };
+
+  const addSeries = (type: XYSeriesType): void => {
     commit(addXYSeries(currentCode(), type), '已添加纵坐标系列，可撤回恢复。');
+  };
 
-  const renameSeries = (index: number, value: string): void =>
-    commit(updateXYSeries(currentCode(), index, { label: value }), '纵坐标名称已更新。');
+  const renameSeries = (index: number, input: HTMLInputElement): void => {
+    const series = model?.series[index];
+    if (!series) return;
+    if (
+      !commit(
+        updateXYSeries(currentCode(), index, { label: input.value }),
+        '纵坐标名称已更新。',
+        '系列名称不能为空。'
+      )
+    ) {
+      restore(input, series.label);
+    }
+  };
 
-  const changeSeriesType = (index: number, type: XYSeriesType): void =>
-    commit(updateXYSeries(currentCode(), index, { type }), '系列类型已更新。');
+  const changeSeriesType = (index: number, input: HTMLSelectElement): void => {
+    const series = model?.series[index];
+    if (!series) return;
+    if (
+      !commit(
+        updateXYSeries(currentCode(), index, { type: input.value as XYSeriesType }),
+        '系列类型已更新。'
+      )
+    ) {
+      restore(input, series.type);
+    }
+  };
 
-  const changeSeriesValues = (index: number, value: string): void => {
+  const changeSeriesValues = (index: number, input: HTMLInputElement): void => {
+    const series = model?.series[index];
+    if (!series) return;
     const expectedCount = model?.xLabels.length ?? 0;
-    const values = parseXYSeriesValues(value, expectedCount);
+    const values = parseXYSeriesValues(input.value, expectedCount);
     if (!values) {
       notify(
         expectedCount > 0
           ? `请输入 ${expectedCount} 个用逗号分隔的数字，与横坐标一一对应。`
           : '请输入用逗号分隔的有效数字。'
       );
+      restore(input, series.values.join(', '));
       return;
     }
-    commit(updateXYSeries(currentCode(), index, { values }), '纵坐标数值已更新。');
+    if (!commit(updateXYSeries(currentCode(), index, { values }), '纵坐标数值已更新。')) {
+      restore(input, series.values.join(', '));
+    }
   };
 
-  const changeAxis = (update: { label?: string; max?: number; min?: number }): void =>
-    commit(updateXYAxis(currentCode(), update), '纵坐标范围已更新。');
+  const changeAxis = (
+    input: HTMLInputElement,
+    key: 'label' | 'max' | 'min',
+    current: string | number
+  ): void => {
+    const raw = input.value.trim();
+    if (key !== 'label' && raw === '') {
+      notify('请输入有效数字。');
+      restore(input, current);
+      return;
+    }
+    const update = key === 'label' ? { label: raw } : { [key]: Number(raw) };
+    if (
+      !commit(
+        updateXYAxis(currentCode(), update),
+        '纵坐标范围已更新。',
+        key === 'label' ? '轴名称不能为空。' : '最小值必须小于最大值。'
+      )
+    ) {
+      restore(input, current);
+    }
+  };
 
   const finishOnEnter = (event: KeyboardEvent): void => {
     if (event.isComposing || event.key !== 'Enter') return;
@@ -102,7 +164,7 @@
           value={model.yAxis.label}
           aria-label="纵坐标轴名称"
           onkeydown={finishOnEnter}
-          onchange={(event) => changeAxis({ label: event.currentTarget.value })} />
+          onchange={(event) => changeAxis(event.currentTarget, 'label', model.yAxis.label)} />
       </label>
       <label class="text-xs">
         <span class="mb-1 block text-muted-foreground">最小值</span>
@@ -111,7 +173,7 @@
           value={model.yAxis.min}
           aria-label="纵坐标最小值"
           onkeydown={finishOnEnter}
-          onchange={(event) => changeAxis({ min: Number(event.currentTarget.value) })} />
+          onchange={(event) => changeAxis(event.currentTarget, 'min', model.yAxis.min)} />
       </label>
       <label class="text-xs">
         <span class="mb-1 block text-muted-foreground">最大值</span>
@@ -120,7 +182,7 @@
           value={model.yAxis.max}
           aria-label="纵坐标最大值"
           onkeydown={finishOnEnter}
-          onchange={(event) => changeAxis({ max: Number(event.currentTarget.value) })} />
+          onchange={(event) => changeAxis(event.currentTarget, 'max', model.yAxis.max)} />
       </label>
     </div>
 
@@ -133,13 +195,12 @@
               value={series.label}
               aria-label={`纵坐标系列 ${index + 1} 名称`}
               onkeydown={finishOnEnter}
-              onchange={(event) => renameSeries(index, event.currentTarget.value)} />
+              onchange={(event) => renameSeries(index, event.currentTarget)} />
             <select
               class="h-10 rounded-sm border border-input bg-background px-2 text-sm"
               value={series.type}
               aria-label={`纵坐标系列 ${index + 1} 类型`}
-              onchange={(event) =>
-                changeSeriesType(index, event.currentTarget.value as XYSeriesType)}>
+              onchange={(event) => changeSeriesType(index, event.currentTarget)}>
               <option value="bar">柱状</option>
               <option value="line">折线</option>
             </select>
@@ -154,7 +215,7 @@
                 aria-label={`纵坐标系列 ${index + 1} 数值`}
                 inputmode="decimal"
                 onkeydown={finishOnEnter}
-                onchange={(event) => changeSeriesValues(index, event.currentTarget.value)} />
+                onchange={(event) => changeSeriesValues(index, event.currentTarget)} />
             </label>
             <div class="grid grid-cols-3">
               <Button

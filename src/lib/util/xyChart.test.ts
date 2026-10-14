@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { parse } from './mermaid';
 import {
+  addXYCategory,
   addXYSeries,
   moveXYSeries,
   parseXYChart,
   parseXYSeriesValues,
+  removeXYCategory,
   removeXYSeries,
   updateXYAxis,
   updateXYSeries
@@ -70,5 +72,50 @@ describe('xyChart', () => {
       '折线系列 1'
     ]);
     expect(updateXYSeries(legacy, 0, { label: '收入' })).toContain('bar "收入" [1, 2]');
+  });
+});
+
+describe('XY categories with titled axes', () => {
+  it('reads x-axis labels when the axis has a title', () => {
+    const model = parseXYChart(`xychart-beta
+  x-axis "月份" ["一月", "二月"]
+  bar "收入" [1, 2]`);
+    expect(model?.xLabels).toEqual(['一月', '二月']);
+    expect(model?.series[0].label).toBe('收入');
+  });
+
+  it('adds categories to an existing chart without an x-axis line', () => {
+    const next = addXYCategory(
+      `xychart-beta
+  bar [1, 2]`,
+      '新分支'
+    );
+    expect(next).toContain('x-axis ["1", "2", "新分支"]');
+    expect(next).toContain('bar [1, 2, 0]');
+  });
+
+  it('refuses to remove the last remaining category', () => {
+    expect(
+      removeXYCategory(
+        `xychart-beta
+  x-axis ["一月"]
+  bar [1]`,
+        '一月'
+      )
+    ).toBeUndefined();
+  });
+});
+
+describe('XY y-axis without a range', () => {
+  it('keeps a single y-axis line when a range is added to a title-only axis', async () => {
+    const code = `xychart-beta
+  x-axis ["一月", "二月"]
+  y-axis "订单数量"
+  bar [10, 20]`;
+    expect(parseXYChart(code)?.yAxis.label).toBe('订单数量');
+    const next = updateXYAxis(code, { max: 50 }) ?? '';
+    expect(next.match(/y-axis/g)).toHaveLength(1);
+    expect(next).toContain('y-axis "订单数量" 0 --> 50');
+    await expect(parse(next)).resolves.toBeDefined();
   });
 });

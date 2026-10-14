@@ -503,6 +503,61 @@ AI 对话,继续使用,21`;
     await expect(parse(removed)).resolves.toBeDefined();
   });
 
+  it('keeps titled XY series and a titled x-axis aligned when categories change', async () => {
+    const initial = `xychart-beta
+  title "月度订单趋势"
+  x-axis "月份" ["一月", "二月", "三月"]
+  y-axis "订单数量" 0 --> 1200
+  bar "实际订单" [520, 610, 720]
+  line "计划订单" [500, 640, 700]
+`;
+    const added = createDiagramBranch({ code: initial, label: '三月' })?.code ?? '';
+    expect(added).toContain('x-axis "月份" ["一月", "二月", "三月", "新分支"]');
+    expect(added.match(/x-axis/g)).toHaveLength(1);
+    expect(added).toContain('bar "实际订单" [520, 610, 720, 0]');
+    expect(added).toContain('line "计划订单" [500, 640, 700, 0]');
+    await expect(parse(added)).resolves.toBeDefined();
+
+    const removed = removeDiagramElementCode(added, { text: '二月' }) ?? '';
+    expect(removed).toContain('x-axis "月份" ["一月", "三月", "新分支"]');
+    expect(removed).toContain('bar "实际订单" [520, 720, 0]');
+    expect(removed).toContain('line "计划订单" [500, 700, 0]');
+    await expect(parse(removed)).resolves.toBeDefined();
+  });
+
+  it('renames ZenUML participants to Chinese and multi-word names', async () => {
+    const code = `zenuml
+  @Actor Customer
+  @Boundary WebApp
+  @Starter(Customer)
+  WebApp.submitOrder(payload)
+`;
+    const chinese = replaceDiagramVisualText(
+      code,
+      requireRange(findVisualTextRange(code, { text: 'Customer' })),
+      'Customer',
+      '顾客'
+    ).code;
+    expect(chinese).toContain('@Actor 顾客');
+    expect(chinese).toContain('@Starter(顾客)');
+    expect(chinese).not.toContain('Customer');
+    await expect(parse(chinese)).resolves.toBeDefined();
+
+    const spaced = replaceDiagramVisualText(
+      chinese,
+      requireRange(findVisualTextRange(chinese, { text: '顾客' })),
+      '顾客',
+      '会员 顾客'
+    ).code;
+    expect(spaced).toContain('@Actor "会员 顾客"');
+    expect(spaced).toContain('@Starter("会员 顾客")');
+    await expect(parse(spaced)).resolves.toBeDefined();
+
+    const branched = createDiagramBranch({ code: chinese, label: '顾客' })?.code ?? '';
+    expect(branched).toContain('顾客.newStep1()');
+    await expect(parse(branched)).resolves.toBeDefined();
+  });
+
   it('moves a timeline period together with all its child events', async () => {
     const initial = `timeline
     2001 : 起步

@@ -434,16 +434,30 @@ test.describe('图上分支编辑', () => {
       const saved = window.localStorage.getItem('codeStore');
       return saved ? ((JSON.parse(saved) as { zoom?: number }).zoom ?? 0) : 0;
     });
+    const viewportScale = () =>
+      page.evaluate(() =>
+        Number(
+          /matrix\(([-\d.e]+)/.exec(
+            document.querySelector('#view svg .svg-pan-zoom_viewport')?.getAttribute('transform') ??
+              ''
+          )?.[1] ?? 0
+        )
+      );
+    const editedScale = await viewportScale();
 
     await page.getByRole('button', { name: '重置', exact: true }).click();
     await expectStoredCodeContains(page, '"需求": 12');
     await expectStoredCodeExcludes(page, '新分支');
+    // Reset clears the saved pan/zoom so the diagram is fitted again. The saved
+    // zoom is therefore either gone or smaller than the zoomed-in value; it is
+    // no longer re-written from svg-pan-zoom's internal destroy/reset callback.
     await page.waitForFunction((beforeZoom) => {
       const saved = window.localStorage.getItem('codeStore');
       if (!saved) return false;
       const state = JSON.parse(saved) as { visualStyles?: object; zoom?: number };
-      return !state.visualStyles && Boolean(state.zoom && state.zoom < beforeZoom);
+      return !state.visualStyles && (state.zoom === undefined || state.zoom < beforeZoom);
     }, editedZoom);
+    await expect.poll(viewportScale).toBeLessThan(editedScale);
   });
 
   test('同类型语法草稿会被保留且不会破坏最后一次有效画面', async ({ page }) => {
