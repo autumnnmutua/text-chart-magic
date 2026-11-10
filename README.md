@@ -6,6 +6,11 @@ Text Chart Magic 是一个中文、开源、桌面端与移动端均可用的可
 - 当前版本：`v1.0.1`
 - 开源许可：[MIT](LICENSE)
 
+## 项目贡献者
+
+- [autumnnmutua](https://github.com/autumnnmutua)
+- [H1oucnn](https://github.com/H1oucnn)
+
 ## 核心能力
 
 - 覆盖流程图、类图、实体关系图、架构图、C4、甘特图、Git、需求图、看板、鱼骨图、象限图、XY 图等 27 类图表。
